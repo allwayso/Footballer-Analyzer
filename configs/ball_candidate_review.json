@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "prediction_id": "football_v11n_size640_tile640_step1_conf0.05_overlap0.2_temporal",
+  "method": "agent_visual_review_of_all_selected_candidate_crops",
+  "human_reviewed": false,
+  "notes": "逐页查看所有已选候选的放大图，核对中心是否可见比赛用球；不是独立球心标注或盲评，不代替 12 像素位置指标。缺失与球鞋重叠等无法确定帧均不算成功。confirmed 为 selected 扣除 ambiguous 和 rejected。",
+  "clips": {
+    "goodview_open": {
+      "prediction_sha256": "5562a7e4a4eae84ec8fd3ea27fb083ab3e067116af705c1af6b5ddd9b9b0ea32",
+      "start_frame": 0,
+      "end_frame": 125,
+      "reviewed_pages": [0, 1, 2, 3],
+      "selected": 120,
+      "ambiguous_frames": [121],
+      "rejected_frames": [],
+      "missing_frames": [25, 26, 122, 123, 124],
+      "confirmed": 119
+    },
+    "goodview_static": {
+      "prediction_sha256": "0bc6cc813f4fcadd9a96f847bcc6842032b4547fdd463bf5347e3a12d2f6291c",
+      "start_frame": 175,
+      "end_frame": 300,
+      "reviewed_pages": [0, 1, 2, 3, 4],
+      "selected": 125,
+      "ambiguous_frames": [],
+      "rejected_frames": [],
+      "missing_frames": [],
+      "confirmed": 125
+    },
+    "goodview_late": {
+      "prediction_sha256": "6799e7f2c2f63d26854301923a4117b85427d90a20d3cf224c10450ec03b050f",
+      "start_frame": 500,
+      "end_frame": 625,
+      "reviewed_pages": [0, 1, 2, 3],
+      "selected": 111,
+      "ambiguous_frames": [520, 521, 522, 524, 568, 598, 620, 622],
+      "rejected_frames": [],
+      "missing_frames": [525, 526, 527, 528, 566, 567, 569, 570, 571, 572, 573, 574, 583, 584],
+      "confirmed": 103
+    }
+  },
+  "total_frames": 375,
+  "confirmed_frames": 347
+}
