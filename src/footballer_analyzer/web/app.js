@@ -103,26 +103,50 @@ function pitchShape(tag, attributes, text) {
   element("pitch").append(svgNode(tag, attributes, text));
 }
 
+function pitchDisplayPoint(point, spec) {
+  return spec.model === "eight" ? [point[1], spec.length_m - point[0]] : [...point];
+}
+
+function landmarkLabel(landmark) {
+  if (!landmark) return "历史自定义参考点";
+  if (state.draftPitch?.spec.model !== "eight") return landmark.label;
+  return landmark.label.replace(/^左侧/, "近端").replace(/^右侧/, "远端").replace(/上/g, "左").replace(/下/g, "右");
+}
+
+function manualMapEditing() {
+  return element("calibration-method").value === "manual" && !element("calibration-tab").hidden;
+}
+
 function drawPitch(observations) {
   const calibration = activeCalibration();
   const definition = activePitch();
-  const length = definition?.spec.length_m || state.data.manifest.config.pitch_length_m;
-  const width = definition?.spec.width_m || state.data.manifest.config.pitch_width_m;
+  const spec = definition?.spec || { model: element("pitch-model").value, length_m: Number(element("pitch-length").value), width_m: Number(element("pitch-width").value) };
+  const { length_m: length, width_m: width } = spec;
+  const portrait = spec.model === "eight";
+  const displayWidth = portrait ? width : length;
+  const displayHeight = portrait ? length : width;
+  const displayPoints = (points) => points.map((point) => pitchDisplayPoint(point, spec).join(",")).join(" ");
   const pitch = element("pitch");
   pitch.replaceChildren();
-  pitch.setAttribute("viewBox", `-4 -4 ${length + 8} ${width + 8}`);
-  pitchShape("rect", { x: -4, y: -4, width: length + 8, height: width + 8, fill: "#214e37" });
-  for (let index = 0; index < 10; index++) pitchShape("rect", { x: index * length / 10, y: 0, width: length / 10, height: width, fill: index % 2 ? "#2d5a3d" : "#285539" });
+  pitch.classList.toggle("portrait", portrait);
+  pitch.setAttribute("viewBox", portrait ? `-5 -7 ${displayWidth + 10} ${displayHeight + 14}` : `-4 -4 ${displayWidth + 8} ${displayHeight + 8}`);
+  pitchShape("rect", { x: -5, y: -7, width: displayWidth + 10, height: displayHeight + 14, fill: "#214e37" });
+  for (let index = 0; index < 10; index++) {
+    const start = index * length / 10;
+    const end = (index + 1) * length / 10;
+    pitchShape("polygon", { points: displayPoints([[start, 0], [end, 0], [end, width], [start, width]]), fill: index % 2 ? "#2d5a3d" : "#285539" });
+  }
   const line = { fill: "none", stroke: "#83a17c", "stroke-width": 0.32 };
-  for (const curve of definition?.lines || []) pitchShape("polyline", { points: curve.points.map((point) => point.join(",")).join(" "), ...line });
-  pitchShape("circle", { cx: length / 2, cy: width / 2, r: 0.6, fill: "#83a17c" });
-  if (!calibration) {
-    pitchShape("text", { x: length / 2, y: width / 2 + 18, "text-anchor": "middle", fill: "#b6ccab", "font-size": 3 }, "先在“场地标定”中建立对应点");
+  for (const curve of definition?.lines || []) pitchShape("polyline", { points: displayPoints(curve.points), ...line });
+  pitchShape("circle", { cx: displayWidth / 2, cy: displayHeight / 2, r: 0.6, fill: "#83a17c" });
+  if (!calibration && !manualMapEditing()) {
+    pitchShape("text", { x: displayWidth / 2, y: displayHeight / 2 + 18, "text-anchor": "middle", fill: "#b6ccab", "font-size": 3 }, "等待手动标定");
   }
   for (const observation of observations) {
     if (!observation.position || observation.reason === "excluded") continue;
-    const [horizontal, vertical] = observation.position;
-    if (horizontal < 0 || horizontal > length || vertical < 0 || vertical > width) continue;
+    const [worldX, worldY] = observation.position;
+    if (worldX < 0 || worldX > length || worldY < 0 || worldY > width) continue;
+    const [horizontal, vertical] = pitchDisplayPoint(observation.position, spec);
     const selected = observation.row.track_id === state.selected;
     const group = svgNode("g", { class: "pitch-point", "data-track-id": observation.row.track_id, tabindex: 0, role: "button", "aria-label": `选中轨迹 ${observation.row.track_id}` });
     if (selected) group.append(svgNode("circle", { cx: horizontal, cy: vertical, r: 2.8, fill: "none", stroke: "white", "stroke-width": 0.4 }));
@@ -132,7 +156,31 @@ function drawPitch(observations) {
     group.addEventListener("keydown", (event) => { if (event.key === "Enter") selectTrack(observation.row.track_id); });
     pitch.append(group);
   }
-  pitchShape("text", { x: 0, y: width + 2.8, fill: "#89a47e", "font-size": 1.7 }, `0,0  → x / ${length} × ${width} m`);
+  if (portrait) {
+    pitchShape("text", { x: displayWidth / 2, y: -2.5, "text-anchor": "middle", fill: "#d8efe6", "font-size": 2.5 }, "远端");
+    pitchShape("text", { x: displayWidth / 2, y: displayHeight + 4, "text-anchor": "middle", fill: "#d8efe6", "font-size": 2.5 }, "近端 / 相机侧");
+  } else {
+    pitchShape("text", { x: 0, y: width + 2.8, fill: "#89a47e", "font-size": 1.7 }, `0,0  → x / ${length} × ${width} m`);
+  }
+  if (definition && manualMapEditing()) drawLandmarks(definition);
+}
+
+function drawLandmarks(definition) {
+  for (const landmark of definition.landmarks) {
+    const [horizontal, vertical] = pitchDisplayPoint(landmark.pitch, definition.spec);
+    const selected = state.selectedLandmark === landmark.id;
+    const paired = state.points.findIndex((point) => point.landmark_id === landmark.id);
+    const label = landmarkLabel(landmark);
+    const group = svgNode("g", { role: "button", tabindex: 0, "aria-label": label, "aria-pressed": selected, "data-landmark": landmark.id, class: "reference-point" });
+    group.append(svgNode("title", {}, label));
+    group.append(svgNode("circle", { cx: horizontal, cy: vertical, r: 1.8, fill: "transparent", "pointer-events": "all" }));
+    group.append(svgNode("circle", { cx: horizontal, cy: vertical, r: selected ? 1.5 : 0.9, fill: selected ? "#ffad48" : paired >= 0 ? "#ffd58f" : "#d8efe6", stroke: selected ? "#fff" : "#214e37", "stroke-width": 0.35 }));
+    if (paired >= 0) group.append(svgNode("text", { x: horizontal + (horizontal > definition.spec.width_m / 2 && definition.spec.model === "eight" ? -1.5 : 1.5), y: vertical - 1.3, "text-anchor": definition.spec.model === "eight" && horizontal > definition.spec.width_m / 2 ? "end" : "start", fill: "#ffd58f", "font-size": 2.7, "font-weight": "bold", "paint-order": "stroke", stroke: "#214e37", "stroke-width": 0.6 }, paired + 1));
+    const choose = () => chooseLandmark(landmark.id).catch((error) => notify(error.message, true));
+    group.addEventListener("click", choose);
+    group.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(); } });
+    element("pitch").append(group);
+  }
 }
 
 function detectionKey(row) {
@@ -350,7 +398,7 @@ function markDraftDirty() {
 function renderCalibrationPoints() {
   element("calibration-points").replaceChildren(...state.points.map((point, index) => {
     const landmark = state.draftPitch?.landmarks.find((entry) => entry.id === point.landmark_id);
-    const row = make("tr"); row.append(make("td", String(index + 1)), make("td", landmark?.label || "历史自定义参考点"), make("td", point.image.map(Math.round).join(" / ")));
+    const row = make("tr"); row.append(make("td", String(index + 1)), make("td", landmarkLabel(landmark)), make("td", point.image.map(Math.round).join(" / ")));
     const cell = make("td"); const remove = make("button", "×", "remove-button");
     remove.setAttribute("aria-label", `删除配对 ${index + 1}`);
     remove.addEventListener("click", () => { state.points.splice(index, 1); markDraftDirty(); renderCalibrationPoints(); draw(); });
@@ -361,7 +409,7 @@ function renderCalibrationPoints() {
     }
     cell.append(remove); row.append(cell); return row;
   }));
-  renderReferencePitch();
+  renderReferenceControls();
 }
 
 function updateEditing() {
@@ -375,41 +423,22 @@ function updateCalibrationUI() {
   const manual = element("calibration-method").value === "manual";
   element("calibration-method").querySelector('[value="white_lines"]').disabled = element("pitch-model").value === "eight";
   element("manual-calibration").hidden = !manual;
-  element("reference-panel").hidden = !manual || element("calibration-tab").hidden;
+  element("reference-controls").hidden = !manualMapEditing();
   element("auto-calibration").hidden = manual;
   element("next-calibration-failure").hidden = manual;
   element("save-calibration").textContent = manual ? "确认并保存标定" : "保存验收状态";
   element("save-calibration").disabled = manual && (state.points.length < 4 || (!state.preview && state.draftDirty));
   if (!manual) { state.pointMode = false; state.roiMode = false; }
   updateEditing();
-  renderReferencePitch();
+  renderReferenceControls();
 }
 
-function renderReferencePitch() {
+function renderReferenceControls() {
   const definition = state.draftPitch;
-  const surface = element("reference-pitch");
-  surface.replaceChildren();
-  if (!definition) return;
-  const { length_m: length, width_m: width } = definition.spec;
-  surface.setAttribute("viewBox", `-4 -4 ${length + 8} ${width + 8}`);
-  surface.append(svgNode("rect", {x: -4, y: -4, width: length + 8, height: width + 8, fill: "#214e37"}));
-  for (const curve of definition.lines) surface.append(svgNode("polyline", { points: curve.points.map((point) => point.join(",")).join(" "), fill: "none", stroke: "#a2b69b", "stroke-width": 0.3 }));
-  for (const landmark of definition.landmarks) {
-    const selected = state.selectedLandmark === landmark.id;
-    const paired = state.points.findIndex((point) => point.landmark_id === landmark.id);
-    const group = svgNode("g", { role: "button", tabindex: 0, "aria-label": landmark.label, "data-landmark": landmark.id, class: "reference-point" });
-    group.append(svgNode("title", {}, landmark.label));
-    group.append(svgNode("circle", { cx: landmark.pitch[0], cy: landmark.pitch[1], r: selected ? 1.5 : 1.0, fill: selected ? "#ffad48" : paired >= 0 ? "#ffd58f" : "#d8efe6", stroke: selected ? "#fff" : "#214e37", "stroke-width": 0.35 }));
-    if (paired >= 0) group.append(svgNode("text", {x: landmark.pitch[0] + 1.4, y: landmark.pitch[1] - 1.2, fill: "#ffd58f", "font-size": 2.7, "font-weight": "bold"}, paired + 1));
-    const choose = () => chooseLandmark(landmark.id).catch((error) => notify(error.message, true));
-    group.addEventListener("click", choose);
-    group.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(); } });
-    surface.append(group);
-  }
-  element("landmark-select").replaceChildren(option("", "点击图中圆点或选择名称"), ...definition.landmarks.map((point) => option(point.id, point.label)));
+  element("landmark-select").replaceChildren(option("", "点击地图圆点或选择名称"), ...(definition?.landmarks || []).map((point) => option(point.id, landmarkLabel(point))));
   element("landmark-select").value = state.selectedLandmark || "";
-  const selected = definition.landmarks.find((point) => point.id === state.selectedLandmark);
-  element("landmark-status").textContent = selected ? `待选：${selected.label}。请在左侧原图点击对应地面点。` : `已配对 ${state.points.length} 点。选择下一个模型参考点；橙色表示当前选择。`;
+  const selected = definition?.landmarks.find((point) => point.id === state.selectedLandmark);
+  element("landmark-status").textContent = selected ? `待选：${landmarkLabel(selected)}。请在原图点击对应地面点。` : `已配对 ${state.points.length} 点。点击上方地图参考点，再点击原图；橙色表示当前选择。`;
 }
 
 async function chooseLandmark(identifier) {
@@ -419,7 +448,7 @@ async function chooseLandmark(identifier) {
   state.pointMode = false; state.roiMode = false;
   if (state.frame !== Number(element("calibration-reference").value)) await showFrame(Number(element("calibration-reference").value));
   state.pointMode = true;
-  updateEditing(); renderReferencePitch(); draw();
+  updateEditing(); renderReferenceControls(); draw();
 }
 
 async function refreshDraftPitch(reset = false) {
@@ -691,7 +720,8 @@ element("export-frame").addEventListener("click", async () => {
   context.fillText(`${state.data.manifest.config.clip_id} · 源帧 ${state.frame} · 时间 ${(state.frame / state.data.manifest.video.fps).toFixed(2)} s`, 40, 92);
   context.drawImage(element("video-canvas"), 40, 130, 1000, 562.5);
   const pitch = element("pitch").cloneNode(true);
-  pitch.setAttribute("width", "980"); pitch.setAttribute("height", "680");
+  const portrait = activePitch()?.spec.model === "eight";
+  pitch.setAttribute("width", portrait ? "700" : "980"); pitch.setAttribute("height", portrait ? "880" : "680");
   const serialized = new XMLSerializer().serializeToString(pitch);
   const image = new Image();
   try {
@@ -701,7 +731,7 @@ element("export-frame").addEventListener("click", async () => {
       image.onerror = () => { clearTimeout(timeout); reject(new Error("球场图片生成失败")); };
       image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(serialized)}`;
     });
-    context.drawImage(image, 1070, 190, 490, 340);
+    context.drawImage(image, portrait ? 1140 : 1070, portrait ? 130 : 190, portrait ? 350 : 490, portrait ? 440 : 340);
     context.fillStyle = "#193632"; context.font = "20px sans-serif";
     context.fillText(selectedName, 1080, 590);
     context.font = "17px sans-serif"; context.fillStyle = "#668273";
@@ -732,7 +762,7 @@ element("point-mode").addEventListener("click", async () => {
   stopPlayback(); state.pointMode = !state.pointMode;
   updateEditing();
   if (state.pointMode) {
-    try { await showFrame(Number(element("calibration-reference").value)); notify("先点击右侧模型参考点，再点击原图对应地面位置；全部点来自同一参考帧。"); } catch (error) { state.pointMode = false; updateEditing(); notify(error.message, true); }
+    try { await showFrame(Number(element("calibration-reference").value)); notify("先点击球场位置地图的参考点，再点击原图对应地面位置；全部点来自同一参考帧。"); } catch (error) { state.pointMode = false; updateEditing(); notify(error.message, true); }
   }
 });
 element("roi-mode").addEventListener("click", async () => {
@@ -758,7 +788,7 @@ element("video-canvas").addEventListener("click", (event) => {
   if (state.pointMode) {
     if (state.frame !== Number(element("calibration-reference").value)) { notify("请回到参考帧后点选，不能混用不同帧的图像点。", true); return; }
     const landmark = state.draftPitch?.landmarks.find((point) => point.id === state.selectedLandmark);
-    if (!landmark) return notify("请先在右侧模型选择参考点。", true);
+    if (!landmark) return notify("请先在球场位置地图选择参考点。", true);
     const point = { image: [Number(horizontal.toFixed(2)), Number(vertical.toFixed(2))], pitch: [...landmark.pitch], landmark_id: landmark.id };
     const existing = state.points.findIndex((entry) => entry.landmark_id === landmark.id);
     if (existing >= 0) state.points[existing] = point; else state.points.push(point);
