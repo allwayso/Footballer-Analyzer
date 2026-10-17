@@ -13,7 +13,9 @@ git pull --ff-only origin main
 git switch -c feat/player-filter
 ```
 
-`feat/player-filter` 是示例，请换成自己的任务名，如 `fix/calibration`、`docs/setup`。一条分支只做一件事；如果有未提交的修改，先保存提交，再切换分支。
+后续新分支统一命名为 `类型/英文短描述`，例如 `feat/player-filter`、`fix/calibration`、`docs/setup`。类型使用 `feat`（新功能）、`fix`（修复）、`docs`（文档）、`refactor`（重构）、`test`（测试）或 `chore`（依赖与工具维护）；描述使用小写英文和数字，单词之间用 `-` 连接。
+
+一条分支只做一件事；如果有未提交的修改，先保存提交，再切换分支。
 
 ## 2. 修改与提交
 
