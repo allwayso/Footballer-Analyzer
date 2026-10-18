@@ -11,6 +11,7 @@ import threading
 import cv2
 
 from .calibration import build_calibration, calibration_directory, load_calibration, save_calibration
+from .ball_pipeline import DEFAULT_MODEL, ball_models, ball_versions, load_ball_result, model_preset, track_ball_run
 from .config import ROOT, config_from_dict, load_config
 from .identity import load_players, validate_bindings
 from .pitch_geometry import pitch_polylines
@@ -37,6 +38,7 @@ class ReviewApp:
         self.calibration_jobs = {}
         self.clips_root = Path(clips_root).resolve()
         self.analysis_job = {"status": "idle"}
+        self.ball_job = {"status": "idle"}
 
     def clip_path(self, clip_id):
         """解析素材库内的视频文件；拒绝越界、子目录及非视频文件。"""
@@ -70,9 +72,7 @@ class ReviewApp:
         return entries
 
     def start_analysis(self, payload):
-        """校验素材及有限参数，启动唯一后台人物与场地任务；同参数重复请求复用。"""
-        from .dynamic_calibration import WhiteLineCalibrator
-
+        """启动独立人物追踪任务；场地设置只作为后续标定的默认值。"""
         source = self.clip_path(payload.get("clip_id"))
         values = load_config(ROOT / "configs/tracking_quality.yaml").snapshot()
         values.update(video=str(source), output_root=str(self.output_root), clip_id=source.stem, match_id=f"local_{source.stem}")
@@ -84,8 +84,6 @@ class ReviewApp:
         config = config_from_dict(values)
         if config.imgsz not in {1280, 1920}:
             raise ValueError("检测尺寸仅支持 1280 或 1920")
-        if config.calibration_method == "white_lines":
-            WhiteLineCalibrator(config.pitch_length_m, config.pitch_width_m)
         if not config.weights.is_file():
             raise ValueError(f"缺少本地模型权重：{config.weights}")
         with self.lock:
@@ -110,7 +108,41 @@ class ReviewApp:
 
                 run_dir = analyze_clip(config, progress)
                 with self.lock:
-                    job.update(status="complete", stage="awaiting_calibration" if config.calibration_method == "manual" else "complete", run_id=run_dir.name)
+                    job.update(status="complete", stage="awaiting_calibration", run_id=run_dir.name)
+            except Exception as error:
+                with self.lock:
+                    job.update(status="failed", error=str(error))
+
+        threading.Thread(target=worker, daemon=True).start()
+        return dict(job)
+
+    def start_ball(self, run_id, payload):
+        """启动独立足球任务；相同请求复用运行状态，不同请求等待当前任务结束。"""
+        run_dir = self.run_dir(run_id)
+        manifest = read_json(run_dir / "manifest.json")
+        if manifest["status"] != "complete":
+            raise ValueError("请先完成人物追踪")
+        model_id = payload.get("model_id", DEFAULT_MODEL)
+        model_preset(model_id)
+        with self.lock:
+            if self.ball_job.get("status") == "running":
+                if (self.ball_job["run_id"], self.ball_job["model_id"]) == (run_id, model_id):
+                    return dict(self.ball_job)
+                raise ValueError("已有足球追踪正在运行，请等待完成")
+            job = {"job_id": new_id("balljob"), "status": "running", "stage": "queued", "run_id": run_id, "model_id": model_id, "processed_frames": 0, "total_frames": manifest["end_frame"] - manifest["start_frame"]}
+            self.ball_job = job
+
+        def progress(stage, processed, total):
+            """同步检测与筛选阶段，供页面刷新后恢复进度。"""
+            with self.lock:
+                job.update(stage=stage, processed_frames=processed, total_frames=total)
+
+        def worker():
+            """完成后发布足球版本，失败保留上一份完成结果。"""
+            try:
+                result = track_ball_run(run_dir, model_id, progress)
+                with self.lock:
+                    job.update(status="complete", stage="complete", result_id=result["result_id"])
             except Exception as error:
                 with self.lock:
                     job.update(status="failed", error=str(error))
@@ -169,7 +201,7 @@ class ReviewApp:
         model = calibration.get("pitch_model", "eleven") if calibration else manifest["config"].get("pitch_model", "eleven")
         spec = calibration.get("pitch_spec") if calibration else None
         definition = pitch_definition(spec or {**pitch_spec(model), "length_m": length, "width_m": width})
-        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "pitch_lines": definition["lines"], "pitch_definition": definition, "reports": reports, "latest_report": latest}
+        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "pitch_lines": definition["lines"], "pitch_definition": definition, "reports": reports, "latest_report": latest, "ball_versions": ball_versions(run_dir)}
 
     def save_bindings(self, run_id, payload):
         """校验整份身份区间后原子保存，返回保存状态；冲突或越界时抛错。"""
@@ -200,7 +232,7 @@ class ReviewApp:
 
         run_dir = self.run_dir(run_id)
         if self.analysis_job.get("status") == "running" and self.analysis_job.get("run_id") == run_id:
-            raise ValueError("该素材的联合分析正在计算场地，请等待完成")
+            raise ValueError("该素材的人物追踪尚未完成，请等待完成")
         manifest = read_json(run_dir / "manifest.json")
         if manifest["status"] != "complete":
             raise ValueError("运行尚未完成")
@@ -287,6 +319,11 @@ def handler_for(app):
                     return self.send_json(app.runs())
                 if path == "/api/clips":
                     return self.send_json(app.clips())
+                if path == "/api/ball-models":
+                    return self.send_json({"models": ball_models(), "default_model": DEFAULT_MODEL})
+                if path == "/api/ball-job":
+                    with app.lock:
+                        return self.send_json(dict(app.ball_job))
                 if path == "/api/pitch-models":
                     query = parse_qs(urlsplit(self.path).query)
                     models = query.get("model", list(PRESETS))
@@ -310,6 +347,9 @@ def handler_for(app):
                             return self.send_json(app.data(run_id))
                         if action == "calibration-job":
                             return self.send_json(dict(app.calibration_jobs.get(run_id, {"status": "idle"})))
+                        if action == "ball":
+                            model_id = parse_qs(urlsplit(self.path).query).get("model", [None])[0]
+                            return self.send_json(load_ball_result(run_dir, model_id))
                         mask_match = re.fullmatch(r"white-lines/(\d+)\.png", action)
                         if mask_match:
                             frame_index = int(mask_match[1])
@@ -371,7 +411,7 @@ def handler_for(app):
                     raise ValueError("请求必须为 JSON 对象")
                 if urlsplit(self.path).path == "/api/analysis":
                     return self.send_json(app.start_analysis(payload))
-                match = re.fullmatch(r"/api/runs/([^/]+)/(calibration|calibration-preview|calibration-auto|calibration-review|bindings|players|report)", urlsplit(self.path).path)
+                match = re.fullmatch(r"/api/runs/([^/]+)/(ball|calibration|calibration-preview|calibration-auto|calibration-review|bindings|players|report)", urlsplit(self.path).path)
                 if not match:
                     return self.send_json({"error": "接口不存在"}, 404)
                 run_id, action = match.groups()
@@ -379,7 +419,9 @@ def handler_for(app):
                     analyzing = app.analysis_job.get("status") == "running" and app.analysis_job.get("run_id") == run_id
                     if action in {"calibration", "calibration-review"} and (analyzing or app.calibration_jobs.get(run_id, {}).get("status") == "running"):
                         raise ValueError("逐帧标定仍在计算，请完成后再修改或验收")
-                    if action == "calibration":
+                    if action == "ball":
+                        result = app.start_ball(run_id, payload)
+                    elif action == "calibration":
                         result = save_calibration(app.run_dir(run_id), payload)
                     elif action == "calibration-preview":
                         result = build_calibration(read_json(app.run_dir(run_id) / "manifest.json"), {**payload, "reviewed": False})

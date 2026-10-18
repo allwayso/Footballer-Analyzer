@@ -1,4 +1,4 @@
-"""验证素材分析区间一致性、容器虚报末尾及后台任务的重入与失败行为。"""
+"""验证独立人物追踪、容器虚报末尾及后台任务的重入与失败行为。"""
 
 from pathlib import Path
 import tempfile
@@ -30,8 +30,8 @@ class AnalysisTests(unittest.TestCase):
         writer.release()
         return clips, video
 
-    def test_complete_source_uses_decodable_tail_and_same_run(self):
-        """容器虚报帧数时，人物处理使用真实末尾，场地复用同一运行且进度阶段有序。"""
+    def test_complete_source_uses_decodable_tail_without_calibration(self):
+        """容器虚报帧数时使用真实末尾，十一人制也不自动触发场地计算。"""
         with tempfile.TemporaryDirectory() as temporary:
             _, video = self.prepare_clip(temporary)
             config = config_from_dict({"video": str(video), "weights": "models/yolov8n.pt", "match_id": "test", "clip_id": "sample", "start_frame": 1})
@@ -44,12 +44,11 @@ class AnalysisTests(unittest.TestCase):
                 callback("tracking", 2, 2)
                 return run_dir
 
-            with patch("footballer_analyzer.analysis.inspect_video", return_value=VideoInfo(64, 48, 25, 8)), patch("footballer_analyzer.analysis.track", side_effect=fake_track), patch("footballer_analyzer.analysis.calibrate_run") as calibration:
+            with patch("footballer_analyzer.analysis.inspect_video", return_value=VideoInfo(64, 48, 25, 8)), patch("footballer_analyzer.analysis.track", side_effect=fake_track), patch("footballer_analyzer.white_line_pipeline.calibrate_run") as calibration:
                 self.assertEqual(analyze_clip(config, lambda *values: progress.append(values)), run_dir)
-                calibration.assert_called_once()
-                self.assertEqual(calibration.call_args.args[:3], (run_dir, 105, 68))
-            self.assertEqual([entry[0] for entry in progress], ["inspecting", "tracking", "calibrating"])
-            self.assertEqual(progress[-1], ("calibrating", 0, 2, run_dir))
+                calibration.assert_not_called()
+            self.assertEqual([entry[0] for entry in progress], ["inspecting", "tracking", "awaiting_calibration"])
+            self.assertEqual(progress[-1], ("awaiting_calibration", 2, 2, run_dir))
 
     def test_clip_inventory_and_path_restrictions(self):
         """仅白线及失败运行仍显示未完成人物追踪，素材路径不可越界。"""
@@ -74,7 +73,7 @@ class AnalysisTests(unittest.TestCase):
             self.assertEqual((config.pitch_length_m, config.pitch_width_m, config.calibration_method), (68, 50, "manual"))
             progress = []
             run_dir = Path(temporary) / "run_test"
-            with patch("footballer_analyzer.analysis.track", return_value=run_dir), patch("footballer_analyzer.analysis.calibrate_run") as calibration:
+            with patch("footballer_analyzer.analysis.track", return_value=run_dir), patch("footballer_analyzer.white_line_pipeline.calibrate_run") as calibration:
                 self.assertEqual(analyze_clip(config, lambda *values: progress.append(values)), run_dir)
                 calibration.assert_not_called()
             self.assertEqual(progress[-1], ("awaiting_calibration", 3, 3, run_dir))
@@ -127,7 +126,7 @@ class AnalysisTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "正在分析"):
                     app.start_analysis({"clip_id": "sample.avi", "imgsz": 1280})
                 write_json(app.output_root / "run_test/manifest.json", {"status": "complete"})
-                with self.assertRaisesRegex(ValueError, "联合分析"):
+                with self.assertRaisesRegex(ValueError, "人物追踪尚未完成"):
                     app.start_calibration("run_test", {})
                 release.set()
                 for thread in threading.enumerate():
