@@ -25,24 +25,29 @@
     <div id="notice" class="notice" role="status">正在读取运行数据…</div>
 
     <section class="panel source-panel" aria-labelledby="source-title">
-      <div class="panel-heading"><h2 id="source-title">选择素材并分析</h2><label class="check-inline"><input id="unprocessed-only" type="checkbox" checked> 仅显示尚无人物追踪的素材</label></div>
+      <div class="panel-heading"><h2 id="source-title">步骤 1 · 人物追踪</h2><label class="check-inline"><input id="unprocessed-only" type="checkbox" checked> 仅显示尚无人物追踪的素材</label></div>
       <div class="source-grid">
         <div class="source-preview"><img id="clip-preview" alt="所选素材的首帧预览" hidden><p id="clip-preview-status">选择 data/clips 中的视频</p></div>
         <div class="source-controls">
           <label>本地视频素材<select id="clip-select" aria-label="选择视频素材"><option value="">正在读取素材…</option></select></label>
           <p id="clip-detail" class="hint">素材来自 data/clips，可刷新列表发现新视频。</p>
-          <div class="form-row"><label>分析场地模型<select id="analysis-model"><option value="eleven">十一人制</option><option value="eight">八人制 · 68 × 50 m</option></select></label><label>分析标定方式<select id="analysis-method"><option value="white_lines">逐帧白线 · 运动镜头</option><option value="manual">手动固定 · 固定镜头</option></select></label></div>
+          <details class="analysis-window"><summary>后续场地标定默认设置（此步不计算场地）</summary><div class="form-row"><label>场地模型<select id="analysis-model"><option value="eleven">十一人制</option><option value="eight">八人制 · 68 × 50 m</option></select></label><label>标定方式<select id="analysis-method"><option value="white_lines">逐帧白线 · 运动镜头</option><option value="manual">手动固定 · 固定镜头</option></select></label></div>
           <div class="form-row">
             <label>场地长 · m<input id="analysis-length" type="number" min="1" step="0.1" value="105"></label>
             <label>场地宽 · m<input id="analysis-width" type="number" min="1" step="0.1" value="68"></label>
-            <label>人物检测精度<select id="analysis-imgsz"><option value="1920">1920 · 精度优先</option><option value="1280">1280 · 速度优先</option></select></label>
-          </div>
+          </div></details>
+          <label>人物检测精度<select id="analysis-imgsz"><option value="1920">1920 · 精度优先</option><option value="1280">1280 · 速度优先</option></select></label>
           <details class="analysis-window"><summary>限定分析区间（可选）</summary><div class="form-row"><label>开始源帧（含）<input id="analysis-start" type="number" min="0" step="1" value="0"></label><label>结束源帧（不含，留空至末尾）<input id="analysis-end" type="number" min="1" step="1" placeholder="视频末尾"></label></div></details>
-          <div class="button-row"><button id="start-analysis" class="primary" disabled>开始人物追踪与场地追踪</button><button id="refresh-clips" class="quiet">刷新素材</button><button id="open-analysis" hidden>打开分析结果</button></div>
+          <div class="button-row"><button id="start-analysis" class="primary" disabled>开始人物追踪</button><button id="refresh-clips" class="quiet">刷新素材</button><button id="open-analysis" hidden>打开人物结果</button></div>
           <progress id="analysis-progress" max="1" value="0" hidden aria-label="当前分析阶段进度"></progress>
-          <p id="analysis-status" class="hint" role="status">依次运行人物追踪和逐帧白线标定，完成后自动打开画面与球场投影。</p>
+          <p id="analysis-status" class="hint" role="status">完成人物追踪后，分别运行场地标定和足球追踪。</p>
         </div>
       </div>
+    </section>
+
+    <section class="panel workflow-panel" aria-label="当前运行的独立步骤">
+      <div class="workflow-step"><h2>步骤 2 · 场地标定</h2><p class="hint">为左侧选中的运行单独标定，复用人物结果。</p><button id="open-calibration-step" class="secondary" disabled>打开场地标定</button></div>
+      <div class="workflow-step"><h2>步骤 3 · 足球追踪与复核</h2><label>足球模型<select id="ball-model" aria-label="选择足球模型" disabled></select></label><div class="button-row"><button id="start-ball" class="primary" disabled>运行足球追踪</button><label class="check-inline"><input id="show-ball" type="checkbox" checked> 显示足球 ▼</label></div><progress id="ball-progress" max="1" value="0" hidden aria-label="足球追踪进度"></progress><p id="ball-job-status" class="hint" role="status">先从左侧选择已完成的运行。</p><p id="ball-result-status" class="hint" role="status">倒三角尖端指向本帧球心；漏检帧不补点。地图位置为地面近似投影。</p><button id="next-ball-missing" class="quiet" disabled>下一足球缺失帧</button></div>
     </section>
 
     <section class="stat-grid" aria-label="运行概况">
