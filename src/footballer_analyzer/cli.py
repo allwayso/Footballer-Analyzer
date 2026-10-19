@@ -1,4 +1,4 @@
-"""解析跟踪、标定、报告、历史查询与本地服务命令，统一返回退出码。"""
+"""解析跟踪、标定、性能测试、报告、历史查询与本地服务命令，统一返回退出码。"""
 
 import argparse
 import json
@@ -14,6 +14,16 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     track_command = commands.add_parser("track", help="检测跟踪并保存原始轨迹")
     track_command.add_argument("--config", required=True)
+    benchmark_command = commands.add_parser("benchmark", help="重新执行选定流水线，测量并比较阶段速度")
+    benchmark_command.add_argument("--config", required=True)
+    benchmark_command.add_argument("--stages", nargs="+", choices=["tracking", "pitch", "ball"], default=["tracking", "pitch", "ball"])
+    benchmark_command.add_argument("--repeat", type=int, default=1, help="正式测试轮数")
+    benchmark_command.add_argument("--warmup", type=int, default=0, help="不计入结果的完整预热轮数")
+    benchmark_command.add_argument("--ball-model", default="football_v11n_tile")
+    benchmark_command.add_argument("--start-frame", type=int)
+    benchmark_command.add_argument("--end-frame", type=int)
+    benchmark_command.add_argument("--output-root", type=Path, default=ROOT / "outputs/bench")
+    benchmark_command.add_argument("--baseline", type=Path, help="相同测试协议的旧 result.json")
     calibration_command = commands.add_parser("calibrate", help="从 YAML 对应点保存标定，也可在前端点选")
     calibration_command.add_argument("--run", required=True, type=Path)
     calibration_command.add_argument("--points", required=True, type=Path)
@@ -40,6 +50,15 @@ def main(argv=None):
             from .pipeline import track
 
             track(load_config(args.config))
+        elif args.command == "benchmark":
+            from dataclasses import replace
+            from .benchmark import print_benchmark, run_benchmark
+
+            config = load_config(args.config)
+            overrides = {key: getattr(args, key) for key in ("start_frame", "end_frame") if getattr(args, key) is not None}
+            result = run_benchmark(replace(config, **overrides), args.stages, args.repeat, args.warmup,
+                                   args.ball_model, args.output_root, args.baseline)
+            print_benchmark(result)
         elif args.command == "calibrate":
             from .calibration import save_calibration
             from .storage import read_yaml
