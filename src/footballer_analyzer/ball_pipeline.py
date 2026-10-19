@@ -7,6 +7,7 @@ import time
 from .ball_detection import detect
 from .ball_tracking import BallSelectionConfig, select_ball_candidates
 from .config import ROOT
+from .performance import PerformanceRecorder
 from .storage import file_hash, new_id, read_json, write_json
 from .video import inspect_video, read_frames
 
@@ -72,11 +73,12 @@ def select_in_windows(records, fps, image_size, config, window_size=250, context
     return selected
 
 
-def track_ball_run(run_dir, model_id=DEFAULT_MODEL, progress=None):
+def track_ball_run(run_dir, model_id=DEFAULT_MODEL, progress=None, performance: PerformanceRecorder | None = None):
     """逐源帧补跑足球，保存候选与真实选中观测，成功后发布独立结果版本。
 
     只读取人物清单和源视频，不读取或修改标定；progress 接收阶段、已处理与总帧数。
     即使人物有抽帧，足球仍覆盖清单内每个源帧；源视频指纹不符或解码不足时失败。
+    performance 可选，记录本次足球检测和筛选耗时及选中帧数。
     """
     run_dir = Path(run_dir)
     manifest = read_json(run_dir / "manifest.json")
@@ -127,8 +129,12 @@ def track_ball_run(run_dir, model_id=DEFAULT_MODEL, progress=None):
         selected = select_in_windows(records, info.fps, (info.width, info.height), settings)
         frames = [{**record, "selected": candidate} for record, candidate in zip(records, selected)]
         write_json(result_dir / "frames.json", frames)
-        metadata.update(status="complete", observed_frames=sum(candidate is not None for candidate in selected), elapsed_s=round(time.perf_counter() - started, 3))
+        elapsed_s = time.perf_counter() - started
+        observed_frames = sum(candidate is not None for candidate in selected)
+        metadata.update(status="complete", observed_frames=observed_frames, elapsed_s=round(elapsed_s, 3))
         write_json(result_dir / "manifest.json", metadata)
+        if performance is not None:
+            performance.record("ball", total, elapsed_s, info.fps, {"run_id": run_dir.name, "model_id": model_id, "observed_frames": observed_frames})
         return metadata
     except Exception as error:
         metadata.update(status="failed", error=str(error))

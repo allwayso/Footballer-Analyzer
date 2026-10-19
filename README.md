@@ -99,6 +99,18 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 
 追踪精度优先时使用 `track --config configs/tracking_quality.yaml`（1920 输入）。人工抽样复查：`python scripts/review_tracking.py --run outputs/run_... --reference configs/tracking_review_demo.json`。对比与剩余串号见 [09 追踪丢失诊断与修复](docs/09-追踪丢失诊断与修复.md)。
 
+### 阶段性能基准
+
+对人物追踪、逐帧白线和足球追踪做优化时，使用固定协议重新执行，而不是读取旧运行耗时：
+
+```powershell
+& .\.venv\Scripts\python.exe -m footballer_analyzer benchmark `
+  --config configs/performance_benchmark.yaml `
+  --repeat 3 --warmup 1
+```
+
+可用 `--stages tracking`、`--stages pitch` 或 `--stages ball` 单独测试；每次输出独立 `result.json`，可用 `--baseline <旧 result.json>` 比较速度倍数。详细字段和基准边界见 [阶段计算速度分析](docs/16-各阶段计算速度分析.md)。
+
 ### CLI 报告与历史
 
 ```powershell

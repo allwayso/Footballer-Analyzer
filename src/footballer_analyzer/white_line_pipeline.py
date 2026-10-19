@@ -11,6 +11,7 @@ from .config import Config, ROOT
 from .dynamic_calibration import WhiteLineCalibrator
 from .pitch_geometry import transform_points
 from .pitch_models import pitch_spec
+from .performance import PerformanceRecorder
 from .storage import TRACK_SCHEMA, RowWriter, file_hash, new_id, read_json, write_json, write_yaml
 from .video import inspect_video
 
@@ -41,10 +42,11 @@ def draw_line_overlay(image, record, mask, curves):
     return overlay
 
 
-def calibrate_run(run_dir, length=None, width=None, progress=None):
+def calibrate_run(run_dir, length=None, width=None, progress=None, performance: PerformanceRecorder | None = None):
     """为运行区间逐源帧计算 H；完成后发布新版本，保留旧标定及人物缓存。
 
     progress 接收已处理帧数与总帧数；失败帧保留原因，禁止以旧矩阵补齐。
+    performance 可选，记录本次白线阶段耗时和有效帧比例。
     """
     run_dir = Path(run_dir)
     manifest = read_json(run_dir / "manifest.json")
@@ -89,7 +91,8 @@ def calibrate_run(run_dir, length=None, width=None, progress=None):
         raise ValueError("分析过程中源视频发生变化，未替换原标定")
     end_frame = int(next(reversed(records))) + 1
     counts = dict(Counter(record["status"] for record in records.values()))
-    summary = {"frame_count": len(records), "valid_frames": counts.get("valid", 0), "statuses": counts, "elapsed_s": round(time.perf_counter() - started, 3)}
+    elapsed_s = time.perf_counter() - started
+    summary = {"frame_count": len(records), "valid_frames": counts.get("valid", 0), "statuses": counts, "elapsed_s": round(elapsed_s, 3)}
     summary["valid_ratio"] = summary["valid_frames"] / len(records)
     calibration = {
         "schema_version": 2, "mode": "white_lines", "calibration_id": calibration_id,
@@ -104,6 +107,8 @@ def calibrate_run(run_dir, length=None, width=None, progress=None):
     write_json(destination / "summary.json", summary)
     write_yaml(destination / "calibration.yaml", calibration)
     write_yaml(run_dir / "calibration.yaml", calibration)
+    if performance is not None:
+        performance.record("pitch", len(records), elapsed_s, manifest["video"].get("fps"), {"run_id": run_dir.name, "valid_ratio": summary["valid_ratio"]})
     print(f"[calibration] {run_dir} | {summary['valid_frames']}/{len(records)} valid | {summary['elapsed_s']:.1f}s", flush=True)
     return calibration
 

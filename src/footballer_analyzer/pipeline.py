@@ -8,16 +8,18 @@ import cv2
 
 from .config import Config
 from .detection import YoloDetector
+from .performance import PerformanceRecorder
 from .storage import DETECTION_SCHEMA, TRACK_SCHEMA, RowWriter, file_hash, new_id, versions, write_json, write_yaml
 from .tracking import ByteTracker
 from .teams import TeamClassifier, shirt_feature
 from .video import inspect_video, read_frames
 
 
-def track(config: Config, progress=None) -> Path:
+def track(config: Config, progress=None, performance: PerformanceRecorder | None = None) -> Path:
     """分析配置指定的源帧窗口，创建独立运行目录并返回其路径。
 
     写出原始缓存并复用跨帧跟踪器；progress 接收阶段、已处理数与总数，失败写入清单后抛错。
+    performance 可选，记录当前人物阶段耗时；抽帧吞吐与源区间时长分别计算。
     """
     info = inspect_video(config.video)
     end_frame = config.end_frame if config.end_frame is not None else info.frame_count
@@ -114,8 +116,11 @@ def track(config: Config, progress=None) -> Path:
         cards = "".join(f'<article><img src="crops/{entry["track_id"]}.jpg" alt="轨迹缩略图"><h2>#{entry["track_id"]}</h2><p>帧 {entry["start_frame"]}–{entry["end_frame"]} · {entry["observations"]} 次观测</p></article>' for entry in catalog.values())
         (run_dir / "track_catalog.html").write_text(f'<!doctype html><meta charset="utf-8"><title>轨迹目录</title><style>body{{font-family:system-ui;background:#102026;color:#eee}}main{{display:flex;flex-wrap:wrap;gap:16px}}article{{padding:16px;background:#1e343c}}img{{height:120px}}</style><h1>{html.escape(run_dir.name)}</h1><p>轨迹号仅在本次运行中有效。使用调试台绑定真实身份。</p><main>{cards}</main>', encoding="utf-8")
         write_yaml(run_dir / "bindings.yaml", {"run_id": run_dir.name, "bindings": []})
-        manifest.update(status="complete", processed_frames=processed, track_count=len(catalog), detection_count=detection_count, observation_count=observation_count, elapsed_s=round(time.perf_counter() - started, 3))
+        elapsed_s = time.perf_counter() - started
+        manifest.update(status="complete", processed_frames=processed, track_count=len(catalog), detection_count=detection_count, observation_count=observation_count, elapsed_s=round(elapsed_s, 3))
         write_json(run_dir / "manifest.json", manifest)
+        if performance is not None:
+            performance.record("tracking", processed, elapsed_s, info.fps, {"run_id": run_dir.name, "input_size": config.imgsz, "track_count": len(catalog), "detection_count": detection_count, "stride": config.stride}, source_frames=end_frame - config.start_frame)
         print(f"[complete] {run_dir}", flush=True)
         return run_dir
     except Exception as error:
