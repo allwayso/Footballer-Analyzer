@@ -3,7 +3,8 @@ const state = { runId: null, data: null, frame: 0, selected: null, image: null, 
 const colors = { home: "#28cfac", away: "#f9b26a", cluster_0: "#28cfac", cluster_1: "#f9b26a", unknown: "#a6b3b2" };
 const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", calibration_unreliable: "本帧白线几何不足，暂停场地投影", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
 const analysis = { clips: [], timer: null, running: false, activeClip: null, handledId: null, runId: null };
-const analysisStages = { queued: "准备分析", inspecting: "核实视频可解码区间", sampling: "采样球衣颜色", tracking: "人物检测与持续追踪", calibrating: "逐帧白线与场地追踪", awaiting_calibration: "人物追踪完成，待手动标定", complete: "分析完成" };
+const analysisStages = { queued: "准备分析", inspecting: "核实视频可解码区间", sampling: "采样球衣颜色", tracking: "人物检测与持续追踪", awaiting_calibration: "人物追踪完成，待场地标定", complete: "分析完成" };
+const ball = { models: [], result: null, rows: new Map(), timer: null, requestId: 0, running: false, handledId: null };
 Object.assign(state, { draftPitch: null, preview: null, selectedLandmark: null, draftVersion: 0, geometryRequest: 0, pendingCalibrations: new Set() });
 let pitchModels = [];
 
@@ -117,6 +118,24 @@ function manualMapEditing() {
   return element("calibration-method").value === "manual" && !element("calibration-tab").hidden;
 }
 
+function currentBall() {
+  return element("show-ball").checked ? ball.rows.get(state.frame)?.selected : null;
+}
+
+function ballPosition() {
+  const candidate = currentBall();
+  const calibration = calibrationAt(state.frame);
+  if (!candidate || !calibration || state.frame < calibration.start_frame || state.frame >= calibration.end_frame) return null;
+  const x = (candidate[0] + candidate[2]) / 2;
+  const y = (candidate[1] + candidate[3]) / 2;
+  if (!pointInPolygon(x, y, calibration.roi)) return null;
+  const matrix = calibration.homography;
+  const divisor = matrix[2][0] * x + matrix[2][1] * y + matrix[2][2];
+  if (Math.abs(divisor) < 1e-8) return null;
+  const position = [(matrix[0][0] * x + matrix[0][1] * y + matrix[0][2]) / divisor, (matrix[1][0] * x + matrix[1][1] * y + matrix[1][2]) / divisor];
+  return position.every(Number.isFinite) && position[0] >= 0 && position[0] <= calibration.pitch_length_m && position[1] >= 0 && position[1] <= calibration.pitch_width_m ? position : null;
+}
+
 function drawPitch(observations) {
   const calibration = activeCalibration();
   const definition = activePitch();
@@ -161,6 +180,11 @@ function drawPitch(observations) {
     pitchShape("text", { x: displayWidth / 2, y: displayHeight + 4, "text-anchor": "middle", fill: "#d8efe6", "font-size": 2.5 }, "近端 / 相机侧");
   } else {
     pitchShape("text", { x: 0, y: width + 2.8, fill: "#89a47e", "font-size": 1.7 }, `0,0  → x / ${length} × ${width} m`);
+  }
+  const football = ballPosition();
+  if (football) {
+    const [x, y] = pitchDisplayPoint(football, spec);
+    pitchShape("polygon", { points: `${x - 1.6},${y - 3} ${x + 1.6},${y - 3} ${x},${y}`, fill: "#ffea42", stroke: "#172920", "stroke-width": 0.45, "data-ball-marker": "true" });
   }
   if (definition && manualMapEditing()) drawLandmarks(definition);
 }
@@ -251,6 +275,14 @@ function drawVideo(observations) {
     context.fillText(label, row.bbox_x1 + 6, Math.max(20, row.bbox_y1 - 8));
     context.beginPath(); context.arc((row.bbox_x1 + row.bbox_x2) / 2, row.bbox_y2, selected ? 6 : 4, 0, Math.PI * 2); context.fill();
   }
+  const football = currentBall();
+  if (football) {
+    const x = (football[0] + football[2]) / 2;
+    const y = (football[1] + football[3]) / 2;
+    const size = Math.max(12, canvas.width / 100);
+    context.beginPath(); context.moveTo(x - size / 2, y - size - 3); context.lineTo(x + size / 2, y - size - 3); context.lineTo(x, y); context.closePath();
+    context.fillStyle = "#ffea42"; context.strokeStyle = "#18211b"; context.lineWidth = Math.max(2, size / 10); context.fill(); context.stroke();
+  }
   if (state.frame === Number(element("calibration-reference").value) && (state.pointMode || !element("calibration-tab").hidden)) state.points.forEach((point, index) => {
     context.fillStyle = "#ffd58f"; context.beginPath(); context.arc(point.image[0], point.image[1], 7, 0, Math.PI * 2); context.fill();
     context.font = "bold 24px sans-serif"; context.fillText(String(index + 1), point.image[0] + 10, point.image[1] - 10);
@@ -281,6 +313,8 @@ function draw() {
   const observations = (state.frameRows.get(state.frame) || []).map(project);
   drawVideo(observations);
   drawPitch(observations);
+  const ballRecord = ball.rows.get(state.frame);
+  element("ball-result-status").textContent = !ball.result ? "当前模型尚无结果。点击运行足球追踪；其他模型的已有结果可直接切换查看。" : `本帧 ${ballRecord?.selected ? `▼ 检出 · 分数 ${ballRecord.selected[4].toFixed(2)}` : "缺失，不显示标记"} · 原始候选 ${ballRecord?.candidates.length || 0} · ${ball.result.manifest.observed_frames}/${ball.result.frames.length} 帧有选中观测（不代表准确率）。倒三角尖端指向球心；地图为地面近似投影。`;
   const calibration = activeCalibration();
   if (calibration?.mode === "white_lines") {
     const record = calibration.frames?.[String(state.frame)];
@@ -324,7 +358,7 @@ async function showFrame(frameIndex) {
   if ((state.pointMode || state.roiMode) && frameIndex !== Number(element("calibration-reference").value)) return notify("点选期间锁定参考帧，请先结束点选再切换画面。", true);
   const manifest = state.data.manifest;
   const bounded = Math.min(manifest.end_frame - 1, Math.max(manifest.start_frame, frameIndex));
-  const step = state.data.calibration?.mode === "white_lines" ? 1 : manifest.config.stride;
+  const step = ball.result || state.data.calibration?.mode === "white_lines" ? 1 : manifest.config.stride;
   const aligned = manifest.start_frame + Math.floor((bounded - manifest.start_frame) / step) * step;
   const requestId = ++state.requestId;
   const image = new Image();
@@ -363,7 +397,7 @@ async function play() {
   state.playing = true; element("play").textContent = "Ⅱ"; element("play").setAttribute("aria-label", "暂停");
   while (state.playing) {
     const manifest = state.data.manifest;
-    const sampling = state.data.calibration?.mode === "white_lines" ? 1 : manifest.config.stride;
+    const sampling = ball.result || state.data.calibration?.mode === "white_lines" ? 1 : manifest.config.stride;
     const step = Math.max(sampling, Math.round(manifest.video.fps / 10 * Number(element("playback-rate").value) / sampling) * sampling);
     if (state.frame + step >= manifest.end_frame) { stopPlayback(); break; }
     try { await showFrame(state.frame + step); } catch (error) { notify(error.message, true); stopPlayback(); }
@@ -494,6 +528,9 @@ function renderStatistics() {
 
 async function loadRun(runId, preserve = false) {
   stopPlayback();
+  ball.requestId++; ball.result = null; ball.rows.clear();
+  state.data = null; state.image = null; state.whiteImage = null;
+  for (const id of ["start-ball", "ball-model", "open-calibration-step", "next-ball-missing"]) element(id).disabled = true;
   state.pointMode = false; state.roiMode = false; state.preview = null; state.selectedLandmark = null;
   state.geometryRequest++; state.draftVersion++;
   const oldFrame = state.frame;
@@ -503,6 +540,11 @@ async function loadRun(runId, preserve = false) {
   const data = await request(api());
   if (runRequestId !== state.runRequestId) return;
   state.data = data;
+  element("open-calibration-step").disabled = false;
+  const lastModel = localStorage.getItem("football-model");
+  const resultModel = data.ball_versions?.[0]?.model_id;
+  const preferredModel = ball.models.some((entry) => entry.id === lastModel) ? lastModel : resultModel || "football_v11n_tile";
+  element("ball-model").value = preferredModel;
   state.frameRows.clear(); state.detectionRows.clear(); state.motionRows.clear();
   for (const row of data.tracks) { if (!state.frameRows.has(row.frame_index)) state.frameRows.set(row.frame_index, []); state.frameRows.get(row.frame_index).push(row); }
   for (const row of data.detections || []) { if (!state.detectionRows.has(row.frame_index)) state.detectionRows.set(row.frame_index, []); state.detectionRows.get(row.frame_index).push(row); }
@@ -514,7 +556,7 @@ async function loadRun(runId, preserve = false) {
   state.draftPitch = data.pitch_definition;
   element("pitch-model").value = data.pitch_definition.spec.model;
   element("calibration-method").value = calibration ? calibration.mode === "white_lines" ? "white_lines" : "manual" : manifest.config.calibration_method || (data.pitch_definition.spec.model === "eight" ? "manual" : "white_lines");
-  const sourceStep = calibration?.mode === "white_lines" ? 1 : manifest.config.stride;
+  const sourceStep = 1;
   const slider = element("frame-slider"); slider.min = manifest.start_frame; slider.max = manifest.end_frame - 1; slider.step = sourceStep;
   element("frame-number").min = manifest.start_frame; element("frame-number").max = manifest.end_frame - 1; element("frame-number").step = sourceStep;
   element("video-canvas").width = manifest.video.width; element("video-canvas").height = manifest.video.height;
@@ -540,9 +582,58 @@ async function loadRun(runId, preserve = false) {
   state.draftDirty = false;
   if (!preserve) { state.selected = null; element("binding-start").value = manifest.start_frame; element("binding-end").value = manifest.end_frame; }
   renderBindings(); renderCalibrationPoints(); renderStatistics(); updateCalibrationUI();
+  let ballError = null;
+  try { await loadBallResult(false); } catch (error) { ballError = error; }
+  if (runRequestId !== state.runRequestId) return;
   await showFrame(preserve ? oldFrame : manifest.start_frame);
+  if (runRequestId !== state.runRequestId) return;
   notify(calibration?.mode === "white_lines" ? "逐帧白线结果已加载。播放移动过程，核对黄色模型与原始白线是否持续重合。" : calibration ? "固定标定已加载。点击球员，对照原图脚点与场地位置。" : "轨迹已加载。请在“场地标定”选择模型和方式，完成位置标定。");
+  if (ballError) notify(`人物结果已加载，足球结果读取失败：${ballError.message}。可刷新重试。`, true);
   watchCalibration(state.runId).catch((error) => notify(error.message, true));
+  watchBall().catch((error) => notify(error.message, true));
+}
+
+async function loadBallResult(redraw = true) {
+  const runId = state.runId;
+  const modelId = element("ball-model").value;
+  const requestId = ++ball.requestId;
+  ball.result = null; ball.rows.clear();
+  element("next-ball-missing").disabled = true;
+  if (redraw) draw();
+  if (!runId || !modelId) return;
+  const result = await request(`/api/runs/${encodeURIComponent(runId)}/ball?model=${encodeURIComponent(modelId)}`);
+  if (requestId !== ball.requestId || state.runId !== runId || element("ball-model").value !== modelId) return;
+  ball.result = result;
+  for (const row of result?.frames || []) ball.rows.set(row.frame, row);
+  element("next-ball-missing").disabled = !result?.frames.some((row) => !row.selected);
+  element("frame-slider").step = result || state.data.calibration?.mode === "white_lines" ? 1 : state.data.manifest.config.stride;
+  element("frame-number").step = element("frame-slider").step;
+  if (redraw) draw();
+}
+
+async function watchBall() {
+  clearTimeout(ball.timer);
+  try {
+    const job = await request("/api/ball-job");
+    ball.running = job.status === "running";
+    element("start-ball").disabled = ball.running || !state.data || !ball.models.find((entry) => entry.id === element("ball-model").value)?.available;
+    element("ball-model").disabled = !state.data;
+    element("start-ball").textContent = ball.running ? "足球追踪进行中…" : "运行足球追踪";
+    element("ball-progress").hidden = !ball.running;
+    element("ball-progress").max = Math.max(1, job.total_frames || 0);
+    element("ball-progress").value = job.processed_frames || 0;
+    const label = element("ball-job-status");
+    label.classList.toggle("error", job.status === "failed");
+    label.textContent = ball.running ? `${job.run_id} · ${job.stage === "ball_filtering" ? "跨帧筛选" : "逐帧检测"} · ${job.processed_frames}/${job.total_frames}。可继续复核已有结果。` : job.status === "failed" ? `足球追踪失败：${job.error}。已有结果仍可查看，可重试。` : job.status === "complete" ? `${job.run_id} · 足球追踪完成，选择对应模型查看。` : "为左侧当前运行追加足球追踪；场地标定可独立完成。";
+    if (ball.running) ball.timer = setTimeout(watchBall, 1000);
+    else if (job.status === "complete" && ball.handledId !== job.job_id) {
+      ball.handledId = job.job_id;
+      if (job.run_id === state.runId && job.model_id === element("ball-model").value) await loadBallResult();
+    }
+  } catch (error) {
+    element("ball-job-status").textContent = `读取足球进度失败：${error.message}，正在重试。`;
+    ball.timer = setTimeout(watchBall, 2000);
+  }
 }
 
 function showClip() {
@@ -572,7 +663,12 @@ async function refreshClips() {
 }
 
 async function initialize(preferredId = null) {
-  const [runs, clips, definitions] = await Promise.all([request("/api/runs"), request("/api/clips"), request("/api/pitch-models")]);
+  const [runs, clips, definitions, models] = await Promise.all([request("/api/runs"), request("/api/clips"), request("/api/pitch-models"), request("/api/ball-models")]);
+  ball.models = models.models;
+  element("ball-model").replaceChildren(...ball.models.map((entry) => {
+    const node = option(entry.id, entry.label + (entry.available ? "" : " · 未安装权重"));
+    return node;
+  }));
   pitchModels = definitions.models;
   analysis.clips = clips;
   renderClips();
@@ -581,7 +677,7 @@ async function initialize(preferredId = null) {
   element("run-select").disabled = !completed.length;
   if (!completed.length) {
     element("run-select").append(option("", "尚无已完成运行"));
-    notify("在上方选择视频，点击“开始人物追踪与场地追踪”，完成后自动显示结果。");
+    notify("在上方选择视频，点击“开始人物追踪”，完成后分别进行场地标定与足球追踪。");
   } else {
     const candidate = preferredId || state.runId;
     const selectedId = completed.some((run) => run.run_id === candidate) ? candidate : completed[0].run_id;
@@ -605,7 +701,7 @@ async function watchAnalysis() {
       for (const [id, key] of [["analysis-model", "pitch_model"], ["analysis-method", "calibration_method"], ["analysis-length", "pitch_length_m"], ["analysis-width", "pitch_width_m"], ["analysis-imgsz", "imgsz"], ["analysis-start", "start_frame"], ["analysis-end", "end_frame"]]) element(id).value = job.config[key] ?? "";
     }
     element("start-analysis").disabled = analysis.running || !element("clip-select").value;
-    element("start-analysis").textContent = analysis.running ? "正在分析…" : element("analysis-method").value === "manual" ? "开始人物追踪，随后手动标定" : "开始人物追踪与场地追踪";
+    element("start-analysis").textContent = analysis.running ? "正在追踪人物…" : "开始人物追踪";
     for (const id of ["clip-select", "unprocessed-only", "analysis-model", "analysis-method", "analysis-length", "analysis-width", "analysis-imgsz", "analysis-start", "analysis-end"]) element(id).disabled = analysis.running;
     element("analysis-method").querySelector('[value="white_lines"]').disabled = element("analysis-model").value === "eight";
     element("open-analysis").hidden = !job.run_id || analysis.running;
@@ -620,11 +716,10 @@ async function watchAnalysis() {
     } else if (job.status === "failed") {
       label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage}失败：${job.error}${job.run_id ? "。人物缓存已保留，可打开结果并重新运行场地标定。" : "。可调整参数后重新开始。"}`;
     } else if (job.status === "complete") {
-      label.textContent = job.stage === "awaiting_calibration" ? `${job.clip_id} · 人物追踪完成，待手动标定。选择清晰的一帧，在模型和原图中配对参考点后预览并保存。` : `${job.clip_id} · 人物追踪与场地追踪已完成。点击球员框或球场圆点核对位置。`;
+      label.textContent = `${job.clip_id} · 人物追踪完成。通过步骤 2 单独完成场地标定，或选择足球模型运行步骤 3。`;
       if (analysis.handledId !== job.job_id) {
         analysis.handledId = job.job_id;
         await initialize(job.run_id);
-        if (job.stage === "awaiting_calibration") document.querySelector('[data-tab="calibration"]').click();
       }
     }
   } catch (error) {
@@ -661,10 +756,9 @@ function updateAnalysisOptions(reset = false) {
     element("analysis-method").value = element("analysis-model").value === "eight" ? "manual" : "white_lines";
   }
   element("analysis-method").querySelector('[value="white_lines"]').disabled = element("analysis-model").value === "eight";
-  const manual = element("analysis-method").value === "manual";
   if (!analysis.running) {
-    element("start-analysis").textContent = manual ? "开始人物追踪，随后手动标定" : "开始人物追踪与场地追踪";
-    element("analysis-status").textContent = manual ? "先完成人物追踪，再进入手动固定标定。可复用已有运行，直接到下方“场地标定”操作。" : "依次运行人物追踪和逐帧白线标定，完成后自动打开投影结果。";
+    element("start-analysis").textContent = "开始人物追踪";
+    element("analysis-status").textContent = "此步仅运行人物追踪。完成后，分别点击步骤 2 场地标定与步骤 3 足球追踪。";
   }
 }
 element("analysis-model").addEventListener("change", () => updateAnalysisOptions(true));
@@ -683,6 +777,27 @@ element("start-analysis").addEventListener("click", async () => {
   }
 });
 element("show-boxes").addEventListener("change", draw);
+element("show-ball").addEventListener("change", draw);
+element("ball-model").addEventListener("change", async () => {
+  localStorage.setItem("football-model", element("ball-model").value);
+  stopPlayback();
+  try { await loadBallResult(); await watchBall(); } catch (error) { notify(error.message, true); }
+});
+element("start-ball").addEventListener("click", async () => {
+  if (!state.runId) return;
+  element("start-ball").disabled = true;
+  try { await request(api("ball"), { model_id: element("ball-model").value }); await watchBall(); }
+  catch (error) { notify(error.message, true); await watchBall(); }
+});
+element("open-calibration-step").addEventListener("click", () => {
+  document.querySelector('[data-tab="calibration"]').click();
+  element("calibration-tab").scrollIntoView({ block: "start", behavior: "smooth" });
+});
+element("next-ball-missing").addEventListener("click", () => {
+  const missing = ball.result?.frames.filter((row) => !row.selected) || [];
+  const next = missing.find((row) => row.frame > state.frame) || missing[0];
+  if (next) { stopPlayback(); showFrame(next.frame).catch((error) => notify(error.message, true)); }
+});
 element("show-unmatched").addEventListener("change", draw);
 element("show-white-lines").addEventListener("change", draw);
 element("show-pitch-model").addEventListener("change", draw);
@@ -744,7 +859,7 @@ element("export-frame").addEventListener("click", async () => {
   } catch { notify("导出失败，请重试。", true); }
 });
 element("play").addEventListener("click", play);
-for (const [id, direction] of [["previous-frame", -1], ["next-frame", 1]]) element(id).addEventListener("click", () => { stopPlayback(); if (state.data) showFrame(state.frame + direction * (state.data.calibration?.mode === "white_lines" ? 1 : state.data.manifest.config.stride)).catch((error) => notify(error.message, true)); });
+for (const [id, direction] of [["previous-frame", -1], ["next-frame", 1]]) element(id).addEventListener("click", () => { stopPlayback(); if (state.data) showFrame(state.frame + direction * (ball.result || state.data.calibration?.mode === "white_lines" ? 1 : state.data.manifest.config.stride)).catch((error) => notify(error.message, true)); });
 element("frame-slider").addEventListener("input", () => { stopPlayback(); showFrame(Number(element("frame-slider").value)).catch((error) => notify(error.message, true)); });
 element("frame-number").addEventListener("change", () => { stopPlayback(); showFrame(Number(element("frame-number").value)).catch((error) => notify(error.message, true)); });
 element("jump-frame").addEventListener("click", () => { stopPlayback(); showFrame(Number(element("frame-number").value)).catch((error) => notify(error.message, true)); });

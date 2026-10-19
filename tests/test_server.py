@@ -21,6 +21,67 @@ import test_reporting
 class ServerTests(unittest.TestCase):
     """本地复盘 API 的读操作与输入边界测试。"""
 
+    def test_ball_routes_restore_results_and_reject_unknown_models(self):
+        """球结果刷新可读取，未知模型不可越界，写入沿用本地来源限制。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir, _ = test_reporting.ReportingTests().prepare_run(temporary)
+            app = ReviewApp(temporary)
+            result_dir = run_dir / "balls/ball_test"
+            write_json(result_dir / "manifest.json", {"result_id": "ball_test", "status": "complete", "model_id": "football_v11n", "observed_frames": 1})
+            write_json(result_dir / "frames.json", [{"frame": 0, "candidates": [[1, 1, 3, 3, 0.9]], "selected": [1, 1, 3, 3, 0.9]}, {"frame": 1, "candidates": [], "selected": None}])
+            server = ThreadingHTTPServer(("127.0.0.1", 0), handler_for(app))
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            base = f"http://127.0.0.1:{server.server_port}"
+            try:
+                with urlopen(base + "/api/ball-models") as response:
+                    self.assertIn("football_v11n_tile", [entry["id"] for entry in json.load(response)["models"]])
+                with urlopen(base + "/api/ball-job") as response:
+                    self.assertEqual(json.load(response)["status"], "idle")
+                with urlopen(base + "/api/runs/run_test/ball?model=football_v11n") as response:
+                    self.assertIsNone(json.load(response)["frames"][1]["selected"])
+                with urlopen(base + "/api/runs/run_test/ball?model=coco_v8n") as response:
+                    self.assertIsNone(json.load(response))
+                self.assertEqual(app.data("run_test")["ball_versions"][0]["result_id"], "ball_test")
+                with self.assertRaises(HTTPError):
+                    urlopen(base + "/api/runs/run_test/ball?model=../../other")
+                headers = {"Content-Type": "application/json"}
+                with patch.object(app, "start_ball", return_value={"status": "running"}) as start:
+                    with urlopen(Request(base + "/api/runs/run_test/ball", data=b'{"model_id":"football_v11n"}', headers=headers)) as response:
+                        self.assertEqual(json.load(response)["status"], "running")
+                    start.assert_called_once_with("run_test", {"model_id": "football_v11n"})
+                with self.assertRaises(HTTPError):
+                    urlopen(Request(base + "/api/runs/run_test/ball", data=b'{}', headers={**headers, "Origin": "https://example.com"}))
+            finally:
+                server.shutdown()
+                server.server_close()
+
+    def test_ball_job_reentry_and_failure_preserve_previous_result(self):
+        """同参任务复用，异参被拒绝；后台失败时可继续读取上一份完成结果。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir, _ = test_reporting.ReportingTests().prepare_run(temporary)
+            app = ReviewApp(temporary)
+            entered, release = threading.Event(), threading.Event()
+
+            def fail_tracking(run, model_id, progress):
+                """模拟运行期间抛错，检查任务锁与失败状态。"""
+                progress("ball_detecting", 2, 10)
+                entered.set()
+                release.wait(5)
+                raise ValueError("模拟足球失败")
+
+            with patch("footballer_analyzer.server.track_ball_run", side_effect=fail_tracking), patch("footballer_analyzer.server.model_preset"):
+                job = app.start_ball("run_test", {"model_id": "football_v11n"})
+                self.assertTrue(entered.wait(5))
+                self.assertEqual(app.start_ball("run_test", {"model_id": "football_v11n"})["job_id"], job["job_id"])
+                with self.assertRaisesRegex(ValueError, "已有足球追踪"):
+                    app.start_ball("run_test", {"model_id": "coco_v8n"})
+                release.set()
+                for worker in threading.enumerate():
+                    if worker.name.endswith("(worker)"):
+                        worker.join(timeout=5)
+            self.assertEqual(app.ball_job["status"], "failed")
+            self.assertEqual(app.ball_job["error"], "模拟足球失败")
+
     def test_clip_preview_and_analysis_http_routes(self):
         """验证素材预览、后台状态与启动参数路由，拒绝素材越界和跨源启动。"""
         with tempfile.TemporaryDirectory() as temporary:

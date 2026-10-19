@@ -1,0 +1,17 @@
+{
+  "output": "outputs/ball-benchmark",
+  "clips": [
+    {"id": "goodview_open", "video": "third_party/Football-Game-Possession-Tracking/input videos/goodview.mp4", "start": 0, "end": 125, "source_group": "goodview", "split": "development"},
+    {"id": "goodview_static", "video": "third_party/Football-Game-Possession-Tracking/input videos/goodview.mp4", "start": 175, "end": 300, "source_group": "goodview", "split": "validation"},
+    {"id": "goodview_late", "video": "third_party/Football-Game-Possession-Tracking/input videos/goodview.mp4", "start": 500, "end": 625, "source_group": "goodview", "split": "validation"},
+    {"id": "classico", "video": "third_party/Football-Game-Possession-Tracking/input videos/classico_videoshort.mp4", "start": 50, "end": 175, "source_group": "classico", "split": "validation"},
+    {"id": "barca_girona", "video": "data/clips/barca_girona_45m00s.mp4", "start": 300, "end": 425, "source_group": "barca_girona", "split": "validation"}
+  ],
+  "models": {
+    "coco_v8n": "models/yolov8n.pt",
+    "football_v5s": "third_party/Football-Game-Possession-Tracking/models/best.pt",
+    "football_v8l": "third_party/Football-Analytics-with-DL-and-CV/models/Yolo8L Players/weights/best.pt",
+    "football_v11n": "models/yolo11n-football-ball.pt",
+    "scorevision_ball": "models/scorevision-ball.pt"
+  }
+}
