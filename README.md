@@ -125,6 +125,8 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 
 ### CLI 报告与历史
 
+已人工校验的运行可生成独立的球员轨迹回放、活动热图、速度图与跑动对比页，支持分组筛选及 CSV／JSON／PNG 导出。执行 `python scripts/visualize_player_motion.py --run <运行目录>`，从现有服务打开生成的报告或直接打开 HTML；不另起端口。有效融合仅用于可视化身份副本，不改写原始轨迹与绑定，缺口不补算距离。使用与统计口径见 [20 球员跑动可视化](docs/20-球员跑动可视化.md)。
+
 ```powershell
 # 需已确认标定并至少绑定一名球员
 & .\.venv\Scripts\python.exe -m footballer_analyzer report --run $runDir
