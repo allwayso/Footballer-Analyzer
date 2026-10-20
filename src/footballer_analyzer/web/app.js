@@ -7,6 +7,7 @@ const analysisStages = { queued: "准备分析", inspecting: "核实视频可解
 const ball = { models: [], result: null, rows: new Map(), timer: null, requestId: 0, running: false, handledId: null };
 Object.assign(state, { draftPitch: null, preview: null, selectedLandmark: null, draftVersion: 0, geometryRequest: 0, pendingCalibrations: new Set() });
 let pitchModels = [];
+const missingWhiteFrames = new Set();
 
 function activeCalibration() {
   return state.draftDirty ? state.preview : state.data?.calibration;
@@ -323,7 +324,8 @@ function draw() {
     element("pitch-mode").textContent = valid ? calibration.reviewed ? "逐帧米制投影" : "逐帧 · 待验收" : "白线不足 · 暂停投影";
     element("calibration-detail").textContent = valid ? `白线支持 ${(record.support * 100).toFixed(1)}% · 中位误差 ${record.error_px.toFixed(1)} px` : "本帧不使用上一帧标定";
     element("white-line-status").textContent = `青色：本帧提取的白色线索（可能包含白衣）；黄色：匹配的球场模型。源帧 ${state.frame} · ${valid ? `有效 · ${record.curve_count} 条曲线 · P90 误差 ${record.p90_error_px.toFixed(1)} px` : "几何匹配失败，隐藏模型与球员投影"}。`;
-    element("white-line-status").classList.toggle("calibration-warning", !valid);
+    if (state.whiteLineMissing) element("white-line-status").textContent += " 本帧白线图片缓存缺失，仅隐藏白线证据，原视频可正常播放。";
+    element("white-line-status").classList.toggle("calibration-warning", !valid || state.whiteLineMissing);
   } else {
     element("stat-calibration").textContent = calibration ? calibration.reviewed ? "固定 · 已确认" : "固定 · 预览" : "待标定";
     element("pitch-mode").textContent = calibration ? calibration.reviewed ? "固定米制投影" : "标定预览 · 未确认" : "等待标定预览";
@@ -366,14 +368,26 @@ async function showFrame(frameIndex) {
   image.src = api(`frames/${aligned}`);
   let whiteImage = null;
   const calibration = activeCalibration();
+  let whiteLineMissing = false;
   if (calibration?.mode === "white_lines" && aligned >= calibration.start_frame && aligned < calibration.end_frame) {
-    whiteImage = new Image();
-    const whiteLoaded = new Promise((resolve, reject) => { whiteImage.onload = resolve; whiteImage.onerror = () => reject(new Error("白线识别缓存读取失败，请重新标定")); });
-    whiteImage.src = `${api(`white-lines/${aligned}.png`)}?version=${encodeURIComponent(calibration.calibration_id)}`;
-    await Promise.all([loaded, whiteLoaded]);
+    const whiteUrl = `${api(`white-lines/${aligned}.png`)}?version=${encodeURIComponent(calibration.calibration_id)}`;
+    if (missingWhiteFrames.has(whiteUrl)) {
+      whiteLineMissing = true;
+      await loaded;
+    } else {
+      whiteImage = new Image();
+      const whiteLoaded = new Promise((resolve) => { whiteImage.onload = () => resolve(true); whiteImage.onerror = () => resolve(false); });
+      whiteImage.src = whiteUrl;
+      const [, whiteAvailable] = await Promise.all([loaded, whiteLoaded]);
+      if (!whiteAvailable) {
+        missingWhiteFrames.add(whiteUrl);
+        whiteImage = null;
+        whiteLineMissing = true;
+      }
+    }
   } else await loaded;
   if (requestId !== state.requestId) return;
-  state.frame = aligned; state.image = image; state.whiteImage = whiteImage; draw();
+  state.frame = aligned; state.image = image; state.whiteImage = whiteImage; state.whiteLineMissing = whiteLineMissing; draw();
 }
 
 function selectTrack(trackId) {
@@ -527,6 +541,7 @@ function renderStatistics() {
 }
 
 async function loadRun(runId, preserve = false) {
+  missingWhiteFrames.clear();
   stopPlayback();
   ball.requestId++; ball.result = null; ball.rows.clear();
   state.data = null; state.image = null; state.whiteImage = null;
