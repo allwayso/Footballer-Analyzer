@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">TouchLine — player tracking and movement analysis</title>
+  <desc id="desc">A navy rounded square with a football pitch, a green player trajectory, and detection brackets. The TouchLine name appears below the pitch in small teal lettering.</desc>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="#102B46"/>
+  <g transform="translate(0 -16)">
+    <g fill="none" stroke="#7CA2B8" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="88" y="128" width="336" height="256" rx="20"/>
+      <path d="M256 128v256M88 208h48v96H88M424 208h-48v96h48"/>
+      <circle cx="256" cy="256" r="45"/>
+    </g>
+    <!-- Separate the player trajectory from the pitch markings. -->
+    <path d="M144 336C172 336 174 280 212 280S263 304 284 256S316 190 360 176" fill="none" stroke="#102B46" stroke-width="30" stroke-linecap="round"/>
+    <path d="M144 336C172 336 174 280 212 280S263 304 284 256S316 190 360 176" fill="none" stroke="#35DCB1" stroke-width="14" stroke-linecap="round"/>
+    <g fill="#35DCB1" stroke="#102B46" stroke-width="7">
+      <circle cx="144" cy="336" r="12"/>
+      <circle cx="212" cy="280" r="12"/>
+      <circle cx="284" cy="256" r="12"/>
+    </g>
+    <circle cx="360" cy="176" r="17" fill="#F3FBF8" stroke="#102B46" stroke-width="7"/>
+    <g fill="none" stroke="#35DCB1" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M329 163v-18h18M373 145h18v18M391 189v18h-18M347 207h-18v-18"/>
+    </g>
+  </g>
+  <text x="256" y="441" text-anchor="middle" fill="#35DCB1" font-family="Segoe UI, Arial, sans-serif" font-size="44" font-weight="600" letter-spacing="1.5">TouchLine</text>
+</svg>
