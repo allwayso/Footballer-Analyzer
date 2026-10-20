@@ -81,6 +81,7 @@ secrets/
 # --- 编辑器 / 系统 ---
 .vscode/
 .idea/
+.obsidian/
 .DS_Store
 Thumbs.db
 desktop.ini
