@@ -26,4 +26,4 @@ footballer-analyzer = "footballer_analyzer.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-footballer_analyzer = ["web/*.html", "web/*.css", "web/*.js"]
+footballer_analyzer = ["web/*.html", "web/*.css", "web/*.js", "web/demo/*.html", "web/demo/*.css", "web/demo/*.js", "web/demo/*.py", "web/demo/*.cmd"]

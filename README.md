@@ -139,6 +139,8 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 
 ## 产物与结构
 
+评委展示可使用不依赖本地后端的[静态演示站](https://allwayso.github.io/Footballer-Analyzer-Demo/)。导出工具 `scripts/export_static_demo.py` 将指定运行与可视化报告生成视频识别、人工校验记录、跑动分析三个只读页面，附逐帧图及离线预览入口。更新命令、FFmpeg 依赖、发布方法和验证边界见 [21 评委静态演示站](docs/21-评委静态演示站.md)。主仓库只保存导出工具，素材与展示资源使用独立演示仓库。
+
 ```text
 configs/                         演示配置、标定点、验证过的依赖版本约束
 src/footballer_analyzer/          CLI、检测跟踪、标定、身份、统计、报告、本地服务
