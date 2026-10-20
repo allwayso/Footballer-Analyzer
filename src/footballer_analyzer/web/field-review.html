@@ -35,9 +35,13 @@
       </article>
       <section class="review-records">
         <div class="review-section-heading"><div><h2>场内片段</h2><p id="segment-status">等待读取</p></div></div>
-        <div class="table-wrap review-table"><table><thead><tr><th>轨迹</th><th>首 / 末帧</th><th>观测数</th><th>队伍候选</th><th>融合目标</th><th></th></tr></thead><tbody id="field-segment-table"></tbody></table></div>
-        <div class="review-section-heading history-heading"><div><h2>操作历史</h2><p>融合可逐项撤销。</p></div></div>
-        <div class="table-wrap review-table"><table><thead><tr><th>时间</th><th>来源</th><th>目标</th><th>状态</th><th></th></tr></thead><tbody id="field-merge-history"></tbody></table></div>
+        <div class="association-tools"><button id="analyze-association" class="primary">分析轨迹关联</button><span id="association-status" role="status">尚未分析</span></div>
+        <p id="association-summary" class="association-summary"></p>
+        <p class="association-help">位置与运动为主，颜色辅助；关联分数表示证据强弱。自动融合可撤销，原始轨迹保留。</p>
+        <div id="association-blocked" class="association-blocked"></div>
+        <div class="table-wrap review-table"><table><thead><tr><th>轨迹</th><th>首 / 末帧</th><th>观测数</th><th>队伍候选</th><th>融合目标</th><th>可能融合对象</th><th></th></tr></thead><tbody id="field-segment-table"></tbody></table></div>
+        <div class="review-section-heading history-heading"><div><h2>操作历史</h2><p>融合可逐项撤销；撤销自动项后默认阻止该关联再次自动执行。</p></div></div>
+        <div id="association-batches" class="association-tools"></div><div class="table-wrap review-table"><table><thead><tr><th>时间</th><th>执行方式 / 依据</th><th>来源</th><th>目标</th><th>状态</th><th></th></tr></thead><tbody id="field-merge-history"></tbody></table></div>
       </section>
     </section>
   </main>

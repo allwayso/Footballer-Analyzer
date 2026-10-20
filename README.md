@@ -12,7 +12,7 @@ Agent 开发规范见 [AGENTS.md](AGENTS.md)。
 ## 现在可以做什么
 
 - 浏览器选择 `data/clips` 中尚无人物追踪的素材，独立执行人物追踪、场地标定和足球追踪，查看阶段进度与结果。
-- YOLOv8n 人物检测、ByteTrack 跟踪、球衣颜色分组，缓存原始像素轨迹。
+- YOLOv8n 人物检测、运动与球衣颜色参与的跨帧跟踪、球衣颜色分组，缓存原始像素轨迹。跟踪方案对照与当前实片验收状态见 [专项记录](docs/19-ByteTrack运动颜色前置与缓存重跟踪.md)。
 - 浏览器同帧展示原图检测框、脚点与球场投影；支持播放、逐帧、源帧跳转和联动选择。
 - 填写场地尺寸，逐帧识别白线并自动匹配中圈、边线和禁区，随镜头更新投影；前端回看白线证据与模型叠加。
 - 十一人制 / 八人制独立模型；固定镜头通过模型参考点与原图配对完成标定，无需输入 XY，预览确认后整段复用。
@@ -74,6 +74,8 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 
 点击片段右侧“并入”，输入融合目标源帧，并在该帧实际存在的场内轨迹中选择目标，确认后保存。操作历史支持逐项撤销；刷新或重启服务后可恢复。融合记录单独存入运行目录的 `field_review.json`，用于人工校对分组，不改写原始轨迹，也尚未自动同步到球员身份绑定或跑动报告。
 
+点击“分析轨迹关联”可复用已有视频和轨迹，按球场位置与运动分析断轨，颜色辅助；无可靠标定时用稳定邻近球员作相对参照。高分且通过竞争与整组冲突检查的关联自动融合，其余可在“可能融合对象”栏定位、确认。历史区分自动／手动，支持批次撤销与阻止重合；输入变化后旧自动项暂停生效。新运行也在追踪中积累证据，结束后完整复核。当前参数为未完成调优的工程初值，85分钟素材初测128→116组，**尚未通过减半和独立精度验收**。算法、复现命令和完整边界见 [17 球员轨迹重关联与验收](docs/17-球员轨迹重关联与验收.md)。
+
 ### 八人制固定标定与复查
 
 默认采用 [JFA 八人制推荐规范](https://www.jfa.jp/youth_development/players_first/pdf/8system.pdf)：68 × 50 m，球门 5 × 2.15 m，罚球区 12 × 29 m，球门区 4 × 13 m，罚球点距门线 8 m，中圈及罚球弧半径 7 m。整体长宽可调整，禁区尺寸不会随整体等比缩放。
@@ -101,9 +103,11 @@ $runDir = (Get-ChildItem .\outputs -Directory -Filter 'run_*' | Sort-Object Name
 
 ### 检测与跟踪参数
 
-演示配置现用 `imgsz: 1280`、`confidence: 0.1`、`nms_iou: 0.5`。检测下限和轨迹激活阈值分开：`0.1 < 分数 < 0.25` 的框参与已有轨迹的第二次关联，新建轨迹仍需达到 `0.35`，避免低分噪声直接创建编号。NMS 在跟踪前抑制重复人物框。
+默认跟踪器为 `motion-color-v1`，采用用户回看后选定的整组参数：`tracking_max_cost: 0.99`、`tracking_position_tolerance: 3.0`、`tracking_competition_margin: 0`、`tracking_new_threshold: 0.75`。页面分析、`track` 和 `retrack` 均使用这组默认值；YAML 或命令行显式设置时以设置为准。已有运行保持原结果，需新建运行才能使用新参数。
 
-`lost_track_buffer_s: 3.0` 按真实采样帧率换算丢失缓冲；`track_activation_threshold: 0.25` 与 `minimum_matching_threshold: 0.8` 可单独调整。缓冲保留关联状态，漏检帧仍没有真实观测，不能用来补算路程。修改参数后需要重新执行 `track`，新旧运行的编号不能直接互用。
+演示配置现用 `imgsz: 1280`，页面和质量配置使用1920；检测下限为 `confidence: 0.1`，NMS 为 `nms_iou: 0.5`。所有达到检测下限的框均可续接已有轨迹；新身份至少需两次真实观测，且最高检测分数达到0.75才能确认，最多延迟0.2秒。`retrack --new-threshold` 可覆盖新身份确认阈值。
+
+`lost_track_buffer_s: 3.0` 限制最长续接缺口，只有画面运动时最多1秒。`track_activation_threshold: 0.25` 与 `minimum_matching_threshold: 0.8` 是 `bytetrack-legacy` 的关联参数，不替代新版新建阈值。缓冲保留关联状态，漏检帧仍没有真实观测，不能用来补算路程。修改参数后需要重新执行 `track`，新旧运行的编号不能直接互用。
 
 追踪精度优先时使用 `track --config configs/tracking_quality.yaml`（1920 输入）。人工抽样复查：`python scripts/review_tracking.py --run outputs/run_... --reference configs/tracking_review_demo.json`。对比与剩余串号见 [09 追踪丢失诊断与修复](docs/09-追踪丢失诊断与修复.md)。
 

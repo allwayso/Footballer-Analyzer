@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const state = { runId: null, data: null, frame: 0, image: null, timer: null, selectedRecordId: null, mergeSourceId: null, frameRequest: 0 };
+const state = { runId: null, data: null, frame: 0, image: null, timer: null, selectedRecordId: null, mergeSourceId: null, frameRequest: 0, loadRequest: 0, associationTimer: null, associationJob: null };
 
 async function request(path, payload) {
   const response = await fetch(path, payload === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
@@ -50,7 +50,24 @@ function renderRecords() {
     merge.disabled = segments.length < 2;
     merge.addEventListener("click", () => openMergeDialog(item));
     const action = document.createElement("td"); action.append(merge);
-    row.append(document.createElement("td"), frames, document.createElement("td"), document.createElement("td"), document.createElement("td"), action);
+    const recommendationCell = document.createElement("td");
+    recommendationCell.className = "association-recommendation";
+    const recommendation = state.data.association?.recommendations?.[item.record_id];
+    const recommendedTarget = recommendation && byId.get(recommendation.target_record_id);
+    if (recommendedTarget) {
+      const locate = document.createElement("button"); locate.className = "frame-link";
+      locate.textContent = `#${recommendedTarget.track_id} · ${recommendedTarget.start_frame}–${recommendedTarget.end_frame} · ${recommendation.score.toFixed(3)}`;
+      locate.title = "定位推荐目标";
+      locate.addEventListener("click", () => { state.selectedRecordId = recommendedTarget.record_id; renderRecords(); stopPlayback(); showFrame(recommendation.target_frame).catch((error) => notify(error.message, true)); });
+      const confirm = document.createElement("button"); confirm.className = "secondary"; confirm.textContent = "确认融合";
+      confirm.addEventListener("click", async () => {
+        const runId = state.runId; confirm.disabled = true;
+        try { await request(`/api/runs/${encodeURIComponent(runId)}/association-confirm`, { record_id: item.record_id, batch_id: state.data.association.batch_id }); if (state.runId === runId) { await loadRun(runId); notify("推荐已确认，记为手动执行。"); } }
+        catch (error) { notify(error.message, true); confirm.disabled = false; }
+      });
+      recommendationCell.append(locate, confirm);
+    } else recommendationCell.textContent = "—";
+    row.append(document.createElement("td"), frames, document.createElement("td"), document.createElement("td"), document.createElement("td"), recommendationCell, action);
     row.children[0].textContent = `#${item.track_id}`;
     row.children[2].textContent = item.observation_count;
     row.children[3].textContent = item.team_id || "unknown";
@@ -59,7 +76,7 @@ function renderRecords() {
   });
   if (!rows.length) {
     const row = document.createElement("tr"), cell = document.createElement("td");
-    cell.colSpan = 6; cell.className = "empty-row"; cell.textContent = !state.data.calibration
+    cell.colSpan = 7; cell.className = "empty-row"; cell.textContent = !state.data.calibration
       ? "完成场地标定后显示场内片段。"
       : state.data.calibration.reviewed !== true
         ? "人工确认场地标定后，才会显示场内片段。"
@@ -70,10 +87,14 @@ function renderRecords() {
   const history = (state.data.field_review_history || []).map((operation) => {
     const row = document.createElement("tr"), source = byId.get(operation.source_record_id), destination = byId.get(operation.target_record_id);
     const destinationLabel = destination ? `#${destination.track_id} · ${destination.start_frame}` : operation.target_record_id;
-    const values = [new Date(operation.created_at).toLocaleString(), source ? `#${source.track_id} · ${source.start_frame}` : operation.source_record_id, operation.target_frame === undefined ? destinationLabel : `${destinationLabel} · 帧 ${operation.target_frame}`, operation.status === "active" ? "已生效" : operation.status === "undone" ? "已撤销" : "记录已变化"];
+    const automatic = operation.execution === "auto";
+    const evidence = operation.evidence;
+    const execution = `${automatic ? "自动执行" : "手动执行"}${operation.score === undefined ? "" : ` · ${operation.score.toFixed(3)}`}`;
+    row.title = evidence ? `${operation.algorithm || ""} · ${operation.batch_id || ""} · ${evidence.coordinate_mode === "pitch" ? "球场坐标" : "邻近球员参照"} · 缺口 ${evidence.gap_s}s · 位置误差 ${evidence.position_error}${evidence.coordinate_mode === "pitch" ? "m" : "人物高度"} · 速度差 ${evidence.velocity_delta}` : "手动融合";
+    const values = [new Date(operation.created_at).toLocaleString(), execution, source ? `#${source.track_id} · ${source.start_frame}` : operation.source_record_id, operation.target_frame === undefined ? destinationLabel : `${destinationLabel} · 帧 ${operation.target_frame}`, operation.status === "active" ? "已生效" : operation.status === "undone" ? "已撤销" : "输入已变化，暂停生效"];
     for (const value of values) { const cell = document.createElement("td"); cell.textContent = value; row.append(cell); }
     const cell = document.createElement("td"), undo = document.createElement("button");
-    undo.className = "remove-button"; undo.textContent = "撤销"; undo.disabled = operation.status !== "active";
+    undo.className = "remove-button"; undo.textContent = "撤销"; undo.disabled = operation.status === "undone";
     undo.addEventListener("click", async () => {
       try {
         await request(`/api/runs/${encodeURIComponent(state.runId)}/field-merge-undo`, { operation_id: operation.operation_id });
@@ -82,21 +103,81 @@ function renderRecords() {
     });
     cell.append(undo); row.append(cell); return row;
   });
-  if (!history.length) { const row = document.createElement("tr"), cell = document.createElement("td"); cell.colSpan = 5; cell.className = "empty-row"; cell.textContent = "尚无融合操作。"; row.append(cell); history.push(row); }
+  if (!history.length) { const row = document.createElement("tr"), cell = document.createElement("td"); cell.colSpan = 6; cell.className = "empty-row"; cell.textContent = "尚无融合操作。"; row.append(cell); history.push(row); }
   $("field-merge-history").replaceChildren(...history);
+  renderAssociation();
 }
 
 async function loadRun(runId) {
   stopPlayback();
+  clearTimeout(state.associationTimer);
+  const loadId = ++state.loadRequest;
+  const firstLoad = state.data === null;
+  state.runId = runId;
   const data = await request(`/api/runs/${encodeURIComponent(runId)}`);
-  state.runId = runId; state.data = data;
+  if (loadId !== state.loadRequest || runId !== state.runId) return;
+  state.data = data;
   if (!(data.field_segments || []).some((item) => item.record_id === state.selectedRecordId)) state.selectedRecordId = null;
   const selector = $("run-select"); selector.value = runId;
-  const frame = Math.max(data.manifest.start_frame, Math.min(state.frame || data.manifest.start_frame, data.manifest.end_frame - 1));
+  const requestedFrame = new URLSearchParams(location.search).get("frame");
+  const initialFrame = firstLoad && requestedFrame !== null && Number.isFinite(Number(requestedFrame)) ? Math.round(Number(requestedFrame)) : state.frame;
+  const frame = Math.max(data.manifest.start_frame, Math.min(initialFrame || data.manifest.start_frame, data.manifest.end_frame - 1));
   $("frame-number").min = data.manifest.start_frame; $("frame-number").max = data.manifest.end_frame - 1;
   $("frame-slider").min = data.manifest.start_frame; $("frame-slider").max = data.manifest.end_frame - 1;
   renderRecords(); await showFrame(frame);
+  refreshAssociationJob(runId).catch((error) => notify(error.message, true));
 }
+
+function renderAssociation() {
+  const association = state.data.association;
+  if (!association) return;
+  const summary = association.summary;
+  $("association-summary").textContent = `原始片段数 ${summary.original_records} · 当前独立组数 ${summary.groups} · 自动减少组数 ${summary.automatic_reduction}`;
+  const parameters = association.parameters;
+  $("association-status").textContent = association.status === "stale" ? "输入已变化，旧自动项已暂停，请重新分析" : association.status === "complete" ? `分析完成 · ${association.elapsed_s}s · 自动 > ${parameters.high_threshold} / 推荐 > ${parameters.low_threshold}` : "尚未分析";
+  const blocked = association.blocked_pairs.map((pair) => {
+    const row = document.createElement("div"), label = document.createElement("span"), button = document.createElement("button");
+    label.textContent = `已阻止自动融合：${pair.replaceAll("track-", "#").replaceAll("-frame-", " · 帧 ").replace("|", " ↔ ")}`;
+    button.className = "quiet"; button.textContent = "解除阻止";
+    button.addEventListener("click", async () => { const runId = state.runId; button.disabled = true; try { await request(`/api/runs/${encodeURIComponent(runId)}/association-unblock`, { pair }); if (state.runId === runId) { await loadRun(runId); notify("已解除阻止，重新分析后可再次自动融合。"); } } catch (error) { notify(error.message, true); button.disabled = false; } });
+    row.append(label, button); return row;
+  });
+  $("association-blocked").replaceChildren(...blocked);
+  const batches = [...new Set((state.data.field_review_history || []).filter((item) => item.execution === "auto" && item.status !== "undone").map((item) => item.batch_id))];
+  $("association-batches").replaceChildren(...batches.map((batchId, index) => {
+    const button = document.createElement("button"); button.className = "secondary"; button.textContent = `撤销自动批次 ${index + 1}`; button.title = batchId;
+    button.addEventListener("click", async () => { const runId = state.runId; button.disabled = true; try { await request(`/api/runs/${encodeURIComponent(runId)}/association-batch-undo`, { batch_id: batchId }); if (state.runId === runId) { await loadRun(runId); notify("该批自动融合已撤销，并阻止重算后立即恢复。"); } } catch (error) { notify(error.message, true); button.disabled = false; } });
+    return button;
+  }));
+}
+
+async function refreshAssociationJob(runId) {
+  const job = await request(`/api/runs/${encodeURIComponent(runId)}/association-job`);
+  if (state.runId !== runId) return;
+  const previous = state.associationJob;
+  state.associationJob = { ...job, runId };
+  $("analyze-association").disabled = job.status === "running";
+  if (job.status === "running") {
+    const stage = { queued: "等待开始", evidence: "采集多帧颜色", matching: "分析运动关联" }[job.stage] || "分析中";
+    $("association-status").textContent = `${stage} · ${job.processed_frames} / ${job.total_frames}`;
+    clearTimeout(state.associationTimer);
+    state.associationTimer = setTimeout(() => refreshAssociationJob(runId).catch((error) => { $("analyze-association").disabled = false; notify(`${error.message}，请刷新恢复任务状态。`, true); }), 1000);
+  } else if (job.status === "failed") {
+    $("association-status").textContent = `分析失败：${job.error}`;
+    $("analyze-association").textContent = "重试轨迹关联";
+  } else {
+    $("analyze-association").textContent = "分析轨迹关联";
+    if (previous?.runId === runId && previous.status === "running") await loadRun(runId);
+  }
+}
+
+$("analyze-association").addEventListener("click", async () => {
+  if (!state.data) return;
+  const runId = state.runId;
+  $("analyze-association").disabled = true;
+  try { await request(`/api/runs/${encodeURIComponent(runId)}/association`, {}); if (state.runId === runId) await refreshAssociationJob(runId); }
+  catch (error) { $("analyze-association").disabled = false; notify(error.message, true); }
+});
 
 async function showFrame(frameIndex) {
   const manifest = state.data.manifest;

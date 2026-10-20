@@ -7,6 +7,24 @@ import numpy as np
 from sklearn.cluster import KMeans
 
 
+def shirt_histogram(frame, box):
+    """提取上衣中央的彩色HS及低饱和度亮度直方图，返回归一化分布。"""
+    left, top, right, bottom = box
+    width, height = right - left, bottom - top
+    image_height, image_width = frame.shape[:2]
+    x0, x1 = np.clip([int(left + width * 0.25), int(left + width * 0.75)], 0, image_width)
+    y0, y1 = np.clip([int(top + height * 0.18), int(top + height * 0.50)], 0, image_height)
+    crop = frame[y0:y1, x0:x1]
+    if crop.size < 30:
+        return None
+    pixels = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    chromatic = pixels[:, 1] >= 50
+    indices = np.where(chromatic, (pixels[:, 0].astype(int) * 12 // 180) * 3 + pixels[:, 1].astype(int) * 3 // 256,
+                       36 + pixels[:, 2].astype(int) * 8 // 256)
+    histogram = np.bincount(indices, minlength=44).astype(float)
+    return histogram / histogram.sum()
+
+
 def shirt_feature(frame, box):
     """从 BGR 图像的 xyxy 框内提取上衣中央颜色特征；裁剪过小时返回 None。"""
     left, top, right, bottom = box

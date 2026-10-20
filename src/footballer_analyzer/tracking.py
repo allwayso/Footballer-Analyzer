@@ -5,6 +5,8 @@ import math
 
 import supervision as sv
 
+from .motion_tracking import MotionColorTracker, MotionConfig, TrackedFrame
+
 
 class Tracker(Protocol):
     """跟踪接口：按时间顺序关联检测，为匹配观测附加轨迹 ID。"""
@@ -44,3 +46,32 @@ class ByteTracker:
             raise ValueError("跟踪时间戳必须递增")
         self.previous_timestamp = timestamp_s
         return self.tracker.update_with_detections(detections)
+
+
+class LegacyFrameTracker:
+    """将原版ByteTrack适配为统一的已确认帧批次接口。"""
+
+    def __init__(self, config, fps):
+        """保留旧算法原参数与即时输出语义。"""
+        self.tracker = ByteTracker(fps, config.stride, config.track_activation_threshold,
+                                   config.lost_track_buffer_s, config.minimum_matching_threshold)
+        self.stats = {}
+
+    def submit(self, packet, detections, color_features=None):
+        """即时返回原版跟踪结果，不使用颜色与延迟。"""
+        return [TrackedFrame(packet, self.tracker.update(detections, packet.timestamp_s))]
+
+    def flush(self):
+        """旧算法没有待确认帧。"""
+        return []
+
+
+def create_tracker(config, fps, calibration=None, event_sink=None):
+    """按明确算法版本创建逐帧批次跟踪器，旧阈值只传给旧算法。"""
+    if config.tracking_algorithm == "bytetrack-legacy":
+        return LegacyFrameTracker(config, fps)
+    parameters = MotionConfig(max_cost=config.tracking_max_cost, position_tolerance=config.tracking_position_tolerance,
+                              competition_margin=config.tracking_competition_margin,
+                              new_threshold=config.tracking_new_threshold,
+                              max_gap_s=min(3.0, config.lost_track_buffer_s), image_gap_s=min(1.0, config.lost_track_buffer_s))
+    return MotionColorTracker(fps, config.stride, parameters, calibration, event_sink)

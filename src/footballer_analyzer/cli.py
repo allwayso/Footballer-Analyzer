@@ -14,6 +14,17 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     track_command = commands.add_parser("track", help="检测跟踪并保存原始轨迹")
     track_command.add_argument("--config", required=True)
+    retrack_command = commands.add_parser("retrack", help="复用检测缓存进行运动颜色重跟踪，不运行YOLO")
+    retrack_command.add_argument("--run", required=True, type=Path)
+    retrack_command.add_argument("--output-root", type=Path, default=ROOT / "outputs")
+    retrack_command.add_argument("--algorithm", choices=["motion-color-v1", "bytetrack-legacy"], default="motion-color-v1")
+    retrack_command.add_argument("--max-cost", type=float, default=0.99)
+    retrack_command.add_argument("--position-tolerance", type=float, default=3.0)
+    retrack_command.add_argument("--competition-margin", type=float, default=0)
+    retrack_command.add_argument("--new-threshold", type=float, default=0.75, help="新轨迹确认阈值，默认0.75")
+    retrack_command.add_argument("--color-cache", type=Path)
+    retrack_command.add_argument("--no-video", action="store_true")
+    retrack_command.add_argument("--without-calibration", action="store_true")
     benchmark_command = commands.add_parser("benchmark", help="重新执行选定流水线，测量并比较阶段速度")
     benchmark_command.add_argument("--config", required=True)
     benchmark_command.add_argument("--stages", nargs="+", choices=["tracking", "pitch", "ball"], default=["tracking", "pitch", "ball"])
@@ -50,6 +61,14 @@ def main(argv=None):
             from .pipeline import track
 
             track(load_config(args.config))
+        elif args.command == "retrack":
+            from .motion_tracking import MotionConfig
+            from .retracking import retrack
+
+            parameters = MotionConfig(max_cost=args.max_cost, position_tolerance=args.position_tolerance,
+                                      competition_margin=args.competition_margin, new_threshold=args.new_threshold)
+            retrack(args.run, args.output_root, parameters, args.color_cache, not args.no_video,
+                    args.algorithm, not args.without_calibration)
         elif args.command == "benchmark":
             from dataclasses import replace
             from .benchmark import print_benchmark, run_benchmark

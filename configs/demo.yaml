@@ -15,6 +15,11 @@ nms_iou: 0.5
 track_activation_threshold: 0.25
 lost_track_buffer_s: 3.0
 minimum_matching_threshold: 0.8
+tracking_algorithm: motion-color-v1
+tracking_max_cost: 0.99
+tracking_position_tolerance: 3.0
+tracking_competition_margin: 0.0
+tracking_new_threshold: 0.75
 pitch_length_m: 105.0
 pitch_width_m: 68.0
 speed_limit_mps: 12.0
