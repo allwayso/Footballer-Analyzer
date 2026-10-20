@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Touchline · 场内轨迹校对</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/field-review.css">
+  <script type="module" src="/field-review.js"></script>
+</head>
+<body>
+  <aside class="sidebar review-sidebar">
+    <a class="brand" href="/"><span class="brand-icon">◎</span><span>TOUCHLINE<small>FOOTBALL ANALYZER</small></span></a>
+    <div class="workspace-label">人工校对</div>
+    <a class="nav-active" href="/field-review"><span>⌖</span> 场内轨迹校对</a>
+    <a class="nav-active review-nav" href="/">返回追踪工作台</a>
+    <div class="sidebar-footer"><span class="online-dot"></span> 本地视频复核</div>
+  </aside>
+  <main class="review-main">
+    <header class="page-header"><div><div class="eyebrow">FIELD REVIEW <span>/</span> MANUAL</div><h1>场内轨迹校对</h1><p>核对场内轨迹片段，并把确认属于同一球员的片段合并。</p></div><label class="run-picker">分析运行<select id="run-select" aria-label="选择分析运行"></select></label></header>
+    <div id="review-notice" class="notice" role="status">正在读取分析运行…</div>
+    <section class="review-layout">
+      <article class="panel review-video-panel">
+        <div class="panel-heading"><h2>原视频复核</h2><span id="frame-label" class="mini-tag">FRAME —</span></div>
+        <div class="video-surface"><canvas id="review-canvas" width="1920" height="1080" aria-label="源视频帧与球员轨迹"></canvas></div>
+        <div class="transport review-transport">
+          <button id="previous-frame" aria-label="上一采样帧" title="上一采样帧">↤</button>
+          <button id="play" class="play-button" aria-label="播放" title="播放 / 暂停">▶</button>
+          <button id="next-frame" aria-label="下一采样帧" title="下一采样帧">↦</button>
+          <span id="time-label" class="time-label">0.00 / 0.00 s</span>
+          <input id="frame-slider" type="range" min="0" max="1" value="0" aria-label="源视频帧号">
+          <label class="frame-jump">源帧<input id="frame-number" type="number" min="0" value="0" aria-label="源帧号"></label>
+          <button id="jump-frame" title="跳转到输入的源帧">跳转</button>
+        </div>
+      </article>
+      <section class="review-records">
+        <div class="review-section-heading"><div><h2>场内片段</h2><p id="segment-status">等待读取</p></div></div>
+        <div class="table-wrap review-table"><table><thead><tr><th>轨迹</th><th>首 / 末帧</th><th>观测数</th><th>队伍候选</th><th>融合目标</th><th></th></tr></thead><tbody id="field-segment-table"></tbody></table></div>
+        <div class="review-section-heading history-heading"><div><h2>操作历史</h2><p>融合可逐项撤销。</p></div></div>
+        <div class="table-wrap review-table"><table><thead><tr><th>时间</th><th>来源</th><th>目标</th><th>状态</th><th></th></tr></thead><tbody id="field-merge-history"></tbody></table></div>
+      </section>
+    </section>
+  </main>
+  <dialog id="merge-dialog" class="merge-dialog">
+    <form id="merge-form">
+      <div class="panel-heading"><h2>合并轨迹</h2><button id="close-merge" type="button" class="quiet" aria-label="关闭">×</button></div>
+      <p id="merge-source" class="merge-source"></p>
+      <div class="merge-form-grid">
+        <label>融合目标帧<input id="merge-frame" type="number" min="0" step="1" required></label>
+        <button id="locate-merge-frame" type="button" class="secondary">定位帧</button>
+      </div>
+      <label class="merge-target-label">该帧的目标轨迹<select id="merge-target" required></select></label>
+      <p id="merge-candidates" class="merge-candidates" aria-live="polite">输入目标帧后选择要合并到的轨迹。</p>
+      <div class="merge-actions"><button id="cancel-merge" type="button" class="quiet">取消</button><button id="confirm-merge" type="submit" class="primary" disabled>确认合并</button></div>
+    </form>
+  </dialog>
+</body>
+</html>

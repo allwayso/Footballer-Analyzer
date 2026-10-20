@@ -1,22 +1,25 @@
 """提供回环复盘服务：素材分析任务、源帧、轨迹、标定、身份编辑与报告生成。"""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 import json
+import math
 import mimetypes
 import re
 import threading
 
 import cv2
 
-from .calibration import build_calibration, calibration_directory, load_calibration, save_calibration
+from .calibration import build_calibration, calibration_directory, load_calibration, project_observation, save_calibration
 from .ball_pipeline import DEFAULT_MODEL, ball_models, ball_versions, load_ball_result, model_preset, track_ball_run
 from .config import ROOT, config_from_dict, load_config
 from .identity import load_players, validate_bindings
 from .pitch_geometry import pitch_polylines
 from .pitch_models import PRESETS, pitch_landmarks, pitch_spec
-from .storage import new_id, read_json, read_rows, read_yaml, write_yaml
+from .storage import new_id, read_json, read_rows, read_yaml, write_json, write_yaml
 from .video import read_frame
 
 WEB = Path(__file__).parent / "web"
@@ -25,6 +28,84 @@ WEB = Path(__file__).parent / "web"
 def pitch_definition(spec):
     """将参数快照转换为前端共用的标线和具名参考点。"""
     return {"spec": spec, "landmarks": pitch_landmarks(spec), "lines": [{"name": name, "points": points.tolist()} for name, points in pitch_polylines(spec=spec)]}
+
+
+def field_segments(rows, manifest, calibration):
+    """把可靠场地内观测整理为轨迹片段；同 ID 的短时漏检不切段。"""
+    if calibration is None or calibration.get("reviewed") is not True:
+        return []
+    fps = manifest["video"]["fps"]
+    config = manifest["config"]
+    stride = config["stride"]
+    max_gap_frames = stride + math.ceil(float(config.get("lost_track_buffer_s", 3.0)) * fps)
+    grouped = {}
+    for row in rows:
+        world_x, world_y, reason = project_observation(row, calibration)
+        if reason is None:
+            grouped.setdefault(row["track_id"], []).append((row, world_x, world_y))
+
+    segments = []
+    for track_id, observations in grouped.items():
+        observations.sort(key=lambda item: item[0]["frame_index"])
+        current = []
+        chunks = []
+        for observation in observations:
+            if current and observation[0]["frame_index"] - current[-1][0]["frame_index"] > max_gap_frames:
+                chunks.append(current)
+                current = []
+            current.append(observation)
+        if current:
+            chunks.append(current)
+        for chunk in chunks:
+            first, last = chunk[0][0], chunk[-1][0]
+            teams = Counter(item[0].get("team_id") or "unknown" for item in chunk)
+            record_id = f"track-{track_id}-frame-{first['frame_index']}"
+            segments.append({
+                "record_id": record_id,
+                "track_id": track_id,
+                "start_frame": first["frame_index"],
+                "end_frame": last["frame_index"],
+                "start_time_s": first["timestamp_s"],
+                "end_time_s": last["timestamp_s"],
+                "observation_count": len(chunk),
+                "field_frames": [item[0]["frame_index"] for item in chunk],
+                "team_id": teams.most_common(1)[0][0],
+            })
+    return sorted(segments, key=lambda segment: (segment["start_frame"], segment["track_id"], segment["record_id"]))
+
+
+def merge_groups(segments, operations):
+    """按仍有效的融合记录建立身份组，并标记指向已不存在片段的旧操作。"""
+    parent = {segment["record_id"]: segment["record_id"] for segment in segments}
+
+    def find(record_id):
+        """查找片段所属融合组，并压缩已遍历的路径。"""
+        while parent[record_id] != record_id:
+            parent[record_id] = parent[parent[record_id]]
+            record_id = parent[record_id]
+        return record_id
+
+    known = set(parent)
+    history = []
+    for operation in operations:
+        if operation.get("undone"):
+            status = "undone"
+        elif operation.get("source_record_id") not in known or operation.get("target_record_id") not in known:
+            status = "stale"
+        else:
+            status = "active"
+            source = find(operation["source_record_id"])
+            target = find(operation["target_record_id"])
+            if source != target:
+                parent[source] = target
+        history.append({**operation, "status": status})
+
+    sizes = Counter(find(record_id) for record_id in known)
+    for segment in segments:
+        root = find(segment["record_id"])
+        segment["merge_group_id"] = root
+        segment["merge_group_size"] = sizes[root]
+    return history
 
 
 class ReviewApp:
@@ -181,6 +262,10 @@ class ReviewApp:
         players = load_players(Path(manifest["config"]["players"]))
         bindings = read_yaml(run_dir / "bindings.yaml", {"run_id": run_id, "bindings": []})
         calibration = load_calibration(run_dir)
+        segments = field_segments(self.track_cache[cache_key]["tracks"], manifest, calibration)
+        review_path = run_dir / "field_review.json"
+        review = read_json(review_path) if review_path.exists() else {"schema_version": 1, "operations": []}
+        review_history = merge_groups(segments, review.get("operations", []))
         reports = []
         report_paths = (run_dir / "reports").glob("report_*/manifest.json")
         for path in sorted(report_paths, key=lambda candidate: (candidate.stat().st_mtime_ns, candidate.parent.name), reverse=True):
@@ -201,7 +286,56 @@ class ReviewApp:
         model = calibration.get("pitch_model", "eleven") if calibration else manifest["config"].get("pitch_model", "eleven")
         spec = calibration.get("pitch_spec") if calibration else None
         definition = pitch_definition(spec or {**pitch_spec(model), "length_m": length, "width_m": width})
-        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "pitch_lines": definition["lines"], "pitch_definition": definition, "reports": reports, "latest_report": latest, "ball_versions": ball_versions(run_dir)}
+        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "field_segments": segments, "field_review_history": review_history, "pitch_lines": definition["lines"], "pitch_definition": definition, "reports": reports, "latest_report": latest, "ball_versions": ball_versions(run_dir)}
+
+    def merge_field_records(self, run_id, payload):
+        """把两个当前可见的场内片段合并为同一人工身份并保留审计记录。"""
+        data = self.data(run_id)
+        source_id = payload.get("source_record_id")
+        target_id = payload.get("target_record_id")
+        target_frame = payload.get("target_frame")
+        known = {segment["record_id"] for segment in data["field_segments"]}
+        if not isinstance(source_id, str) or not isinstance(target_id, str) or source_id == target_id:
+            raise ValueError("请选择两条不同的场内记录")
+        if source_id not in known or target_id not in known:
+            raise ValueError("记录已变化或不在有效场地范围内，请刷新列表")
+        if isinstance(target_frame, bool) or not isinstance(target_frame, int):
+            raise ValueError("请输入有效的融合目标帧")
+        by_id = {segment["record_id"]: segment for segment in data["field_segments"]}
+        if target_frame not in by_id[target_id].get("field_frames", []):
+            raise ValueError("融合目标帧中没有所选目标轨迹，请重新选择")
+        if by_id[source_id]["merge_group_id"] == by_id[target_id]["merge_group_id"]:
+            raise ValueError("这两条记录已属于同一融合组")
+        run_dir = self.run_dir(run_id)
+        path = run_dir / "field_review.json"
+        review = read_json(path) if path.exists() else {"schema_version": 1, "operations": []}
+        operation = {
+            "operation_id": new_id("merge"),
+            "source_record_id": source_id,
+            "target_record_id": target_id,
+            "target_frame": target_frame,
+            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "undone": False,
+        }
+        review["operations"].append(operation)
+        write_json(path, review)
+        return {"saved": True, "operation": operation}
+
+    def undo_field_merge(self, run_id, payload):
+        """撤销指定人工融合边；后续操作仍按历史顺序重新解析。"""
+        operation_id = payload.get("operation_id")
+        if not isinstance(operation_id, str):
+            raise ValueError("融合操作编号无效")
+        run_dir = self.run_dir(run_id)
+        path = run_dir / "field_review.json"
+        review = read_json(path) if path.exists() else {"schema_version": 1, "operations": []}
+        operation = next((item for item in review["operations"] if item.get("operation_id") == operation_id), None)
+        if operation is None or operation.get("undone"):
+            raise ValueError("融合操作不存在或已撤销")
+        operation["undone"] = True
+        operation["undone_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        write_json(path, review)
+        return {"saved": True, "operation_id": operation_id}
 
     def save_bindings(self, run_id, payload):
         """校验整份身份区间后原子保存，返回保存状态；冲突或越界时抛错。"""
@@ -387,7 +521,7 @@ def handler_for(app):
                         raise ValueError("报告路径无效")
                     report_path = app.run_dir(run_id) / "reports" / report_id / file_name
                     return self.send_bytes(report_path.read_bytes(), mimetypes.guess_type(file_name)[0] or "application/octet-stream")
-                static_paths = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css"}
+                static_paths = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/field-review": "field-review.html", "/field-review.js": "field-review.js", "/field-review.css": "field-review.css"}
                 if path in static_paths:
                     static_path = WEB / static_paths[path]
                     return self.send_bytes(static_path.read_bytes(), (mimetypes.guess_type(static_path.name)[0] or "text/plain") + "; charset=utf-8")
@@ -411,7 +545,7 @@ def handler_for(app):
                     raise ValueError("请求必须为 JSON 对象")
                 if urlsplit(self.path).path == "/api/analysis":
                     return self.send_json(app.start_analysis(payload))
-                match = re.fullmatch(r"/api/runs/([^/]+)/(ball|calibration|calibration-preview|calibration-auto|calibration-review|bindings|players|report)", urlsplit(self.path).path)
+                match = re.fullmatch(r"/api/runs/([^/]+)/(ball|calibration|calibration-preview|calibration-auto|calibration-review|bindings|players|field-merges|field-merge-undo|report)", urlsplit(self.path).path)
                 if not match:
                     return self.send_json({"error": "接口不存在"}, 404)
                 run_id, action = match.groups()
@@ -433,6 +567,10 @@ def handler_for(app):
                         result = app.save_bindings(run_id, payload)
                     elif action == "players":
                         result = app.save_player(run_id, payload)
+                    elif action == "field-merges":
+                        result = app.merge_field_records(run_id, payload)
+                    elif action == "field-merge-undo":
+                        result = app.undo_field_merge(run_id, payload)
                     else:
                         from .reporting import create_report
 
