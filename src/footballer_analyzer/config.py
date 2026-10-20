@@ -32,6 +32,11 @@ class Config:
     track_activation_threshold: float = 0.25
     lost_track_buffer_s: float = 3.0
     minimum_matching_threshold: float = 0.8
+    tracking_algorithm: str = "motion-color-v1"
+    tracking_max_cost: float = 0.99
+    tracking_position_tolerance: float = 3.0
+    tracking_competition_margin: float = 0.0
+    tracking_new_threshold: float = 0.75
     pitch_length_m: float = 105.0
     pitch_width_m: float = 68.0
     speed_limit_mps: float = 12.0
@@ -69,6 +74,11 @@ def config_from_dict(payload: dict) -> Config:
         candidate = Path(values[key])
         values[key] = candidate.resolve() if candidate.is_absolute() else (ROOT / candidate).resolve()
     config = Config(**values)
+    if config.tracking_algorithm not in {"motion-color-v1", "bytetrack-legacy"}:
+        raise ValueError("跟踪算法仅支持 motion-color-v1 或 bytetrack-legacy")
+    from .motion_tracking import MotionConfig
+    MotionConfig(max_cost=config.tracking_max_cost, position_tolerance=config.tracking_position_tolerance,
+                 competition_margin=config.tracking_competition_margin, new_threshold=config.tracking_new_threshold)
     pitch_spec(config.pitch_model, config.pitch_length_m, config.pitch_width_m)
     if config.calibration_method not in {"manual", "white_lines"}:
         raise ValueError("标定方式仅支持 manual 或 white_lines")

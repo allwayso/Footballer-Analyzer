@@ -31,7 +31,7 @@ class FieldReviewTests(unittest.TestCase):
             """模拟场地投影对场外观测的过滤。"""
             return (1, 1, "outside_roi") if observation["outside"] else (1, 1, None)
 
-        with patch("footballer_analyzer.server.project_observation", side_effect=project):
+        with patch("footballer_analyzer.field_review.project_observation", side_effect=project):
             segments = field_segments(rows, manifest, {"reviewed": True})
 
         self.assertEqual([(item["start_frame"], item["end_frame"]) for item in segments], [(0, 4), (30, 31)])
@@ -41,7 +41,7 @@ class FieldReviewTests(unittest.TestCase):
     def test_unreviewed_calibration_does_not_create_review_records(self):
         """未验收场地不生成可融合片段。"""
         manifest = {"video": {"fps": 10}, "config": {"stride": 1, "lost_track_buffer_s": 1}}
-        with patch("footballer_analyzer.server.project_observation", return_value=(1, 1, None)):
+        with patch("footballer_analyzer.field_review.project_observation", return_value=(1, 1, None)):
             segments = field_segments([row(1, 0)], manifest, {"reviewed": False})
         self.assertEqual(segments, [])
 

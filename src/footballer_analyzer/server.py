@@ -1,12 +1,10 @@
 """提供回环复盘服务：素材分析任务、源帧、轨迹、标定、身份编辑与报告生成。"""
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 import json
-import math
 import mimetypes
 import re
 import threading
@@ -22,90 +20,16 @@ from .pitch_models import PRESETS, pitch_landmarks, pitch_spec
 from .storage import new_id, read_json, read_rows, read_yaml, write_json, write_yaml
 from .video import read_frame
 
+from .field_review import field_segments, merge_groups
+from .reassociation import (association_view, commit_result, compute_result,
+                            input_signature, load_review, pair_key)
+
 WEB = Path(__file__).parent / "web"
 
 
 def pitch_definition(spec):
     """将参数快照转换为前端共用的标线和具名参考点。"""
     return {"spec": spec, "landmarks": pitch_landmarks(spec), "lines": [{"name": name, "points": points.tolist()} for name, points in pitch_polylines(spec=spec)]}
-
-
-def field_segments(rows, manifest, calibration):
-    """把可靠场地内观测整理为轨迹片段；同 ID 的短时漏检不切段。"""
-    if calibration is None or calibration.get("reviewed") is not True:
-        return []
-    fps = manifest["video"]["fps"]
-    config = manifest["config"]
-    stride = config["stride"]
-    max_gap_frames = stride + math.ceil(float(config.get("lost_track_buffer_s", 3.0)) * fps)
-    grouped = {}
-    for row in rows:
-        world_x, world_y, reason = project_observation(row, calibration)
-        if reason is None:
-            grouped.setdefault(row["track_id"], []).append((row, world_x, world_y))
-
-    segments = []
-    for track_id, observations in grouped.items():
-        observations.sort(key=lambda item: item[0]["frame_index"])
-        current = []
-        chunks = []
-        for observation in observations:
-            if current and observation[0]["frame_index"] - current[-1][0]["frame_index"] > max_gap_frames:
-                chunks.append(current)
-                current = []
-            current.append(observation)
-        if current:
-            chunks.append(current)
-        for chunk in chunks:
-            first, last = chunk[0][0], chunk[-1][0]
-            teams = Counter(item[0].get("team_id") or "unknown" for item in chunk)
-            record_id = f"track-{track_id}-frame-{first['frame_index']}"
-            segments.append({
-                "record_id": record_id,
-                "track_id": track_id,
-                "start_frame": first["frame_index"],
-                "end_frame": last["frame_index"],
-                "start_time_s": first["timestamp_s"],
-                "end_time_s": last["timestamp_s"],
-                "observation_count": len(chunk),
-                "field_frames": [item[0]["frame_index"] for item in chunk],
-                "team_id": teams.most_common(1)[0][0],
-            })
-    return sorted(segments, key=lambda segment: (segment["start_frame"], segment["track_id"], segment["record_id"]))
-
-
-def merge_groups(segments, operations):
-    """按仍有效的融合记录建立身份组，并标记指向已不存在片段的旧操作。"""
-    parent = {segment["record_id"]: segment["record_id"] for segment in segments}
-
-    def find(record_id):
-        """查找片段所属融合组，并压缩已遍历的路径。"""
-        while parent[record_id] != record_id:
-            parent[record_id] = parent[parent[record_id]]
-            record_id = parent[record_id]
-        return record_id
-
-    known = set(parent)
-    history = []
-    for operation in operations:
-        if operation.get("undone"):
-            status = "undone"
-        elif operation.get("source_record_id") not in known or operation.get("target_record_id") not in known:
-            status = "stale"
-        else:
-            status = "active"
-            source = find(operation["source_record_id"])
-            target = find(operation["target_record_id"])
-            if source != target:
-                parent[source] = target
-        history.append({**operation, "status": status})
-
-    sizes = Counter(find(record_id) for record_id in known)
-    for segment in segments:
-        root = find(segment["record_id"])
-        segment["merge_group_id"] = root
-        segment["merge_group_size"] = sizes[root]
-    return history
 
 
 class ReviewApp:
@@ -117,6 +41,7 @@ class ReviewApp:
         self.lock = threading.RLock()
         self.track_cache = {}
         self.calibration_jobs = {}
+        self.association_jobs = {}
         self.clips_root = Path(clips_root).resolve()
         self.analysis_job = {"status": "idle"}
         self.ball_job = {"status": "idle"}
@@ -263,9 +188,10 @@ class ReviewApp:
         bindings = read_yaml(run_dir / "bindings.yaml", {"run_id": run_id, "bindings": []})
         calibration = load_calibration(run_dir)
         segments = field_segments(self.track_cache[cache_key]["tracks"], manifest, calibration)
-        review_path = run_dir / "field_review.json"
-        review = read_json(review_path) if review_path.exists() else {"schema_version": 1, "operations": []}
-        review_history = merge_groups(segments, review.get("operations", []))
+        review = load_review(run_dir)
+        signature = input_signature(run_dir) if review.get("analysis") or any(item.get("execution") == "auto" for item in review["operations"]) else None
+        review_history = merge_groups(segments, review.get("operations", []), signature)
+        association = association_view(run_dir, segments, review, signature)
         reports = []
         report_paths = (run_dir / "reports").glob("report_*/manifest.json")
         for path in sorted(report_paths, key=lambda candidate: (candidate.stat().st_mtime_ns, candidate.parent.name), reverse=True):
@@ -286,7 +212,7 @@ class ReviewApp:
         model = calibration.get("pitch_model", "eleven") if calibration else manifest["config"].get("pitch_model", "eleven")
         spec = calibration.get("pitch_spec") if calibration else None
         definition = pitch_definition(spec or {**pitch_spec(model), "length_m": length, "width_m": width})
-        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "field_segments": segments, "field_review_history": review_history, "pitch_lines": definition["lines"], "pitch_definition": definition, "reports": reports, "latest_report": latest, "ball_versions": ball_versions(run_dir)}
+        return {"manifest": manifest, **self.track_cache[cache_key], "catalog": read_json(run_dir / "catalog.json"), "players": list(players.values()), "bindings": bindings, "calibration": calibration, "field_segments": segments, "field_review_history": review_history, "association": association, "pitch_lines": definition["lines"], "pitch_definition": definition, "reports": reports, "latest_report": latest, "ball_versions": ball_versions(run_dir)}
 
     def merge_field_records(self, run_id, payload):
         """把两个当前可见的场内片段合并为同一人工身份并保留审计记录。"""
@@ -308,7 +234,7 @@ class ReviewApp:
             raise ValueError("这两条记录已属于同一融合组")
         run_dir = self.run_dir(run_id)
         path = run_dir / "field_review.json"
-        review = read_json(path) if path.exists() else {"schema_version": 1, "operations": []}
+        review = load_review(run_dir)
         operation = {
             "operation_id": new_id("merge"),
             "source_record_id": source_id,
@@ -316,6 +242,7 @@ class ReviewApp:
             "target_frame": target_frame,
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "undone": False,
+            "execution": "manual",
         }
         review["operations"].append(operation)
         write_json(path, review)
@@ -328,14 +255,108 @@ class ReviewApp:
             raise ValueError("融合操作编号无效")
         run_dir = self.run_dir(run_id)
         path = run_dir / "field_review.json"
-        review = read_json(path) if path.exists() else {"schema_version": 1, "operations": []}
+        review = load_review(run_dir)
         operation = next((item for item in review["operations"] if item.get("operation_id") == operation_id), None)
         if operation is None or operation.get("undone"):
             raise ValueError("融合操作不存在或已撤销")
         operation["undone"] = True
+        if operation.get("execution") == "auto" and operation.get("node_pair"):
+            blocked = pair_key(*operation["node_pair"])
+            if blocked not in review["blocked_pairs"]:
+                review["blocked_pairs"].append(blocked)
         operation["undone_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         write_json(path, review)
         return {"saved": True, "operation_id": operation_id}
+
+    def association_job(self, run_id):
+        """刷新恢复任务状态；进程重启后将未完成任务标为可重试失败。"""
+        run_dir = self.run_dir(run_id)
+        if run_id in self.association_jobs:
+            return dict(self.association_jobs[run_id])
+        path = run_dir / "association_job.json"
+        job = read_json(path) if path.exists() else {"status": "idle"}
+        if job.get("status") == "running":
+            job.update(status="failed", error="服务已重启，分析中断，请重试")
+            write_json(path, job)
+        self.association_jobs[run_id] = job
+        return dict(job)
+
+    def start_association(self, run_id, payload):
+        """复用原始视频与轨迹，在锁外计算，锁内验证并发布自动融合。"""
+        run_dir = self.run_dir(run_id)
+        if read_json(run_dir / "manifest.json")["status"] != "complete":
+            raise ValueError("请等待人物追踪完成")
+        with self.lock:
+            previous = self.association_job(run_id)
+            if previous.get("status") == "running":
+                return previous
+            if self.calibration_jobs.get(run_id, {}).get("status") == "running":
+                raise ValueError("请等待场地标定完成后分析轨迹关联")
+            job = {"status": "running", "job_id": new_id("assocjob"), "stage": "queued", "processed_frames": 0, "total_frames": 0}
+            self.association_jobs[run_id] = job
+            write_json(run_dir / "association_job.json", job)
+
+        def progress(stage, processed, total):
+            """按阶段更新可刷新恢复的内存进度。"""
+            with self.lock:
+                job.update(stage=stage, processed_frames=processed, total_frames=total)
+
+        def worker():
+            """提交前重新读取人工历史与输入摘要，保留计算期间的人工编辑。"""
+            try:
+                result = compute_result(run_dir, progress=progress)
+                with self.lock:
+                    if self.calibration_jobs.get(run_id, {}).get("status") == "running":
+                        raise ValueError("场地标定正在变化，请完成后重新分析")
+                    commit_result(run_dir, result, result["input_signature"])
+                    job.update(status="complete", stage="complete", batch_id=result["batch_id"])
+            except Exception as error:
+                with self.lock:
+                    job.update(status="failed", error=str(error))
+            finally:
+                with self.lock:
+                    write_json(run_dir / "association_job.json", job)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return dict(job)
+
+    def undo_association_batch(self, run_id, payload):
+        """逐边撤销指定批次自动操作，同时记录阻止关联；不撤销人工历史。"""
+        review = load_review(self.run_dir(run_id))
+        batch_id = payload.get("batch_id")
+        operations = [item for item in review["operations"] if item.get("execution") == "auto" and item.get("batch_id") == batch_id and not item.get("undone")]
+        if not isinstance(batch_id, str) or not operations:
+            raise ValueError("找不到可撤销的自动批次")
+        for operation in operations:
+            self.undo_field_merge(run_id, {"operation_id": operation["operation_id"]})
+        return {"saved": True, "undone_count": len(operations)}
+
+    def unblock_association(self, run_id, payload):
+        """解除一条撤销关联的自动融合禁用，需重新分析才会执行。"""
+        run_dir = self.run_dir(run_id)
+        review = load_review(run_dir)
+        pair = payload.get("pair")
+        if not isinstance(pair, str) or pair not in review["blocked_pairs"]:
+            raise ValueError("找不到该阻止关联")
+        review["blocked_pairs"].remove(pair)
+        write_json(run_dir / "field_review.json", review)
+        return {"saved": True}
+
+    def confirm_association(self, run_id, payload):
+        """校验当前第一推荐并以手动执行保存，防止确认过期分析。"""
+        data = self.data(run_id)
+        association = data["association"]
+        candidate = association["recommendations"].get(payload.get("record_id"))
+        if association["status"] != "complete" or association["batch_id"] != payload.get("batch_id") or not candidate:
+            raise ValueError("推荐已变化，请刷新后确认")
+        result = self.merge_field_records(run_id, candidate)
+        run_dir = self.run_dir(run_id)
+        review = load_review(run_dir)
+        operation = review["operations"][-1]
+        operation.update({key: candidate[key] for key in ["score", "evidence", "node_pair"]})
+        operation.update(batch_id=association["batch_id"], algorithm=association["parameters"]["algorithm"])
+        write_json(run_dir / "field_review.json", review)
+        return result
 
     def save_bindings(self, run_id, payload):
         """校验整份身份区间后原子保存，返回保存状态；冲突或越界时抛错。"""
@@ -479,6 +500,13 @@ def handler_for(app):
                         run_dir = app.run_dir(run_id)
                         if action is None:
                             return self.send_json(app.data(run_id))
+                        if action == "association-job":
+                            return self.send_json(app.association_job(run_id))
+                        if action == "association":
+                            return self.send_json(app.data(run_id)["association"])
+                        if action == "association-result":
+                            data = app.data(run_id)
+                            return self.send_json({"status": data["association"]["status"], "result": load_review(run_dir).get("analysis")})
                         if action == "calibration-job":
                             return self.send_json(dict(app.calibration_jobs.get(run_id, {"status": "idle"})))
                         if action == "ball":
@@ -545,7 +573,7 @@ def handler_for(app):
                     raise ValueError("请求必须为 JSON 对象")
                 if urlsplit(self.path).path == "/api/analysis":
                     return self.send_json(app.start_analysis(payload))
-                match = re.fullmatch(r"/api/runs/([^/]+)/(ball|calibration|calibration-preview|calibration-auto|calibration-review|bindings|players|field-merges|field-merge-undo|report)", urlsplit(self.path).path)
+                match = re.fullmatch(r"/api/runs/([^/]+)/(ball|calibration|calibration-preview|calibration-auto|calibration-review|bindings|players|field-merges|field-merge-undo|association|association-batch-undo|association-unblock|association-confirm|report)", urlsplit(self.path).path)
                 if not match:
                     return self.send_json({"error": "接口不存在"}, 404)
                 run_id, action = match.groups()
@@ -553,7 +581,15 @@ def handler_for(app):
                     analyzing = app.analysis_job.get("status") == "running" and app.analysis_job.get("run_id") == run_id
                     if action in {"calibration", "calibration-review"} and (analyzing or app.calibration_jobs.get(run_id, {}).get("status") == "running"):
                         raise ValueError("逐帧标定仍在计算，请完成后再修改或验收")
-                    if action == "ball":
+                    if action == "association":
+                        result = app.start_association(run_id, payload)
+                    elif action == "association-batch-undo":
+                        result = app.undo_association_batch(run_id, payload)
+                    elif action == "association-unblock":
+                        result = app.unblock_association(run_id, payload)
+                    elif action == "association-confirm":
+                        result = app.confirm_association(run_id, payload)
+                    elif action == "ball":
                         result = app.start_ball(run_id, payload)
                     elif action == "calibration":
                         result = save_calibration(app.run_dir(run_id), payload)

@@ -103,13 +103,20 @@ class TrackingTests(unittest.TestCase):
             noise = people([[40, 5, 55, 40]], [0.15])
             with patch("footballer_analyzer.pipeline.YoloDetector") as detector_type:
                 detector_type.return_value.detect.side_effect = [strong, first, low, noise, strong]
-                run_dir = track(Config(video_path, weights, root, root / "players.yaml", "test", "test"))
+                run_dir = track(Config(video_path, weights, root, root / "players.yaml", "test", "test",
+                                       tracking_max_cost=.75, tracking_position_tolerance=1.5,
+                                       tracking_new_threshold=.35))
             raw_rows = list(read_rows(run_dir / "detections.parquet"))
             track_rows = list(read_rows(run_dir / "tracks.parquet"))
             self.assertEqual(len(raw_rows), 6)
             self.assertEqual([row["frame_index"] for row in track_rows], [0, 1, 3])
             self.assertEqual(len({row["track_id"] for row in track_rows}), 1)
             self.assertEqual(read_json(run_dir / "manifest.json")["detection_count"], 6)
+            self.assertEqual(read_json(run_dir / "association_job.json")["status"], "complete")
+            self.assertEqual(read_json(run_dir / "association_live.json")["status"], "reconciled")
+            evidence = read_json(run_dir / "association_evidence.json")
+            self.assertEqual(set(evidence["samples"]), {f"{track_rows[0]['track_id']}:0"})
+            self.assertEqual(read_json(run_dir / "field_review.json")["analysis"]["nodes"][0]["field_frames"], [0, 1, 3])
 
 
 if __name__ == "__main__":
