@@ -136,6 +136,17 @@ class ServerTests(unittest.TestCase):
             thread.start()
             base = f"http://127.0.0.1:{server.server_port}"
             try:
+                with urlopen(base + "/") as response:
+                    workspace = response.read()
+                with urlopen(base + "/field-review") as response:
+                    field_review = response.read()
+                self.assertIn("球员追踪实验台".encode(), workspace)
+                self.assertNotIn(b"review-canvas", workspace)
+                self.assertIn("场内轨迹校对".encode(), field_review)
+                self.assertIn(b"review-canvas", field_review)
+                for path, expected in [("/field-review", "场内轨迹校对"), ("/field-review.js", "showFrame"), ("/field-review.css", "review-layout")]:
+                    with urlopen(base + path) as response:
+                        self.assertIn(expected.encode(), response.read())
                 with urlopen(base + "/api/runs") as response:
                     self.assertEqual(json.load(response)[0]["run_id"], "run_test")
                 with urlopen(base + "/api/runs/run_test/frames/4") as response:
