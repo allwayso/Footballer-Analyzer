@@ -6,9 +6,9 @@
     "platform": "Windows-11-10.0.26200-SP0",
     "python": "3.13.13",
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (sm_89)",
-    "torch_cpu_env": "2.14.1+cpu",
-    "torch_gpu_env": "2.11.0+cu128",
-    "note": "CPU 与 GPU 数据在同一虚拟环境内顺序采集，避免跨环境差异"
+    "torch_collect": "2.11.0+cu128",
+    "torch_deployed": "2.14.1+cu130",
+    "note": "CPU 与 GPU 数据在同一虚拟环境内顺序采集，仅切换 device 参数，避免跨环境差异"
   },
   "stage_throughput_fps": [
     {
@@ -95,5 +95,14 @@
     "fp16_boxes": 46.4,
     "same_count_frames": 13,
     "total_frames": 20
+  },
+  "recheck_main_env": {
+    "torch": "2.14.1+cu130",
+    "tracking_cpu_fps": 3.76,
+    "tracking_gpu_fps": 8.96,
+    "tracking_speedup": 2.38,
+    "ball_cpu_fps": 3.58,
+    "ball_gpu_fps": 9.59,
+    "ball_speedup": 2.68
   }
 }

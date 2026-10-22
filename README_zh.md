@@ -68,7 +68,7 @@ flowchart LR
 
 ## 快速开始
 
-以下为 Windows / PowerShell 的本地启动方式。要求 **Python 3.11+，推荐 3.12**；检测默认使用 CPU，可选用 GPU 推理，见 [核显推理与设备切换](docs/22-核显推理与设备切换.md)。
+以下为 Windows / PowerShell 的本地启动方式。要求 **Python 3.11+，推荐 3.12**；检测默认使用 CPU，可选用 GPU 推理，见 [GPU 推理与设备切换](docs/22-GPU推理与设备切换.md)。
 
 ### 1. 安装
 

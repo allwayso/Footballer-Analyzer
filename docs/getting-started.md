@@ -21,7 +21,7 @@ python -m venv .venv
 & .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
 ```
 
-之后用配置项 `device: gpu`、命令行 `--device gpu` 或前端下拉框切换；GPU 不可用时会明确报错，不会静默退回 CPU。详见 [22 核显推理与设备切换](22-核显推理与设备切换.md)。
+之后用配置项 `device: gpu`、命令行 `--device gpu` 或前端下拉框切换；GPU 不可用时会明确报错，不会静默退回 CPU。详见 [22 GPU 推理与设备切换](22-GPU推理与设备切换.md)。
 
 已安装本项目时，可直接从这里开始：
 

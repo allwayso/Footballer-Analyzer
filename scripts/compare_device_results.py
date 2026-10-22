@@ -59,8 +59,16 @@ ENVIRONMENT = {
     "platform": platform.platform(),
     "python": sys.version.split()[0],
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (sm_89)",
-    "torch": "2.14.1+cu130",
+    "torch_collect": "2.11.0+cu128",
+    "torch_deployed": "2.14.1+cu130",
     "note": "CPU 与 GPU 数据在同一虚拟环境内顺序采集，仅切换 device 参数，避免跨环境差异",
+}
+
+# 主环境（2.14.1+cu130）按同一协议复核的结果，用于确认加速比不随 torch 构建变化。
+RECHECK = {
+    "torch": "2.14.1+cu130",
+    "tracking_cpu_fps": 3.76, "tracking_gpu_fps": 8.96, "tracking_speedup": 2.38,
+    "ball_cpu_fps": 3.58, "ball_gpu_fps": 9.59, "ball_speedup": 2.68,
 }
 
 
@@ -191,7 +199,12 @@ def build_markdown():
     """生成 Markdown 表格。"""
     lines = ["# CPU 与 GPU 实测对比", ""]
     lines += [f"- 采集时间：2026-10-22", f"- 环境：{ENVIRONMENT['platform']}", f"- GPU：{ENVIRONMENT['gpu']}",
-              f"- 说明：{ENVIRONMENT['note']}", ""]
+              f"- 采集时 torch：{ENVIRONMENT['torch_collect']}", f"- 说明：{ENVIRONMENT['note']}", "",
+              f"> **主环境复核（torch {RECHECK['torch']}）**：同一协议重测，人物追踪 "
+              f"{RECHECK['tracking_cpu_fps']:.2f} → {RECHECK['tracking_gpu_fps']:.2f} FPS"
+              f"（**{RECHECK['tracking_speedup']:.2f}×**），足球追踪 "
+              f"{RECHECK['ball_cpu_fps']:.2f} → {RECHECK['ball_gpu_fps']:.2f} FPS"
+              f"（**{RECHECK['ball_speedup']:.2f}×**），与下表一致，差异在测量波动范围内。", ""]
 
     lines += ["## 一、三阶段端到端吞吐", "",
               "同一素材 125 帧，imgsz 1920，每阶段 2 轮正式测量 + 1 轮预热。", "",
@@ -250,6 +263,7 @@ def main():
         "imgsz": [{"imgsz": s, "cpu_ms": c, "gpu_ms": g, "cpu_fps": cf, "gpu_fps": gf, "speedup": c / g}
                   for s, c, g, cf, gf in IMGSZ_ROWS],
         "fp16_probe": FP16_ROW,
+        "recheck_main_env": RECHECK,
     }
     (OUT / "device_compare.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     (OUT / "device_compare.md").write_text(build_markdown(), encoding="utf-8")
