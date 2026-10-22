@@ -62,7 +62,7 @@ class ServerTests(unittest.TestCase):
             app = ReviewApp(temporary)
             entered, release = threading.Event(), threading.Event()
 
-            def fail_tracking(run, model_id, progress):
+            def fail_tracking(run, model_id, progress, device="cpu"):
                 """模拟运行期间抛错，检查任务锁与失败状态。"""
                 progress("ball_detecting", 2, 10)
                 entered.set()

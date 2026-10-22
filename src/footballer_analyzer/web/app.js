@@ -698,11 +698,11 @@ async function watchAnalysis() {
       if (!Array.from(element("clip-select").options).some((entry) => entry.value === job.clip_id)) renderClips();
       element("clip-select").value = job.clip_id;
       if (element("clip-preview").getAttribute("src") !== `/api/clips/${encodeURIComponent(job.clip_id)}/preview`) showClip();
-      for (const [id, key] of [["analysis-model", "pitch_model"], ["analysis-method", "calibration_method"], ["analysis-length", "pitch_length_m"], ["analysis-width", "pitch_width_m"], ["analysis-imgsz", "imgsz"], ["analysis-start", "start_frame"], ["analysis-end", "end_frame"]]) element(id).value = job.config[key] ?? "";
+      for (const [id, key] of [["analysis-model", "pitch_model"], ["analysis-method", "calibration_method"], ["analysis-length", "pitch_length_m"], ["analysis-width", "pitch_width_m"], ["analysis-imgsz", "imgsz"], ["analysis-device", "device"], ["analysis-start", "start_frame"], ["analysis-end", "end_frame"]]) element(id).value = job.config[key] ?? "";
     }
     element("start-analysis").disabled = analysis.running || !element("clip-select").value;
     element("start-analysis").textContent = analysis.running ? "正在追踪人物…" : "开始人物追踪";
-    for (const id of ["clip-select", "unprocessed-only", "analysis-model", "analysis-method", "analysis-length", "analysis-width", "analysis-imgsz", "analysis-start", "analysis-end"]) element(id).disabled = analysis.running;
+    for (const id of ["clip-select", "unprocessed-only", "analysis-model", "analysis-method", "analysis-length", "analysis-width", "analysis-imgsz", "analysis-device", "analysis-start", "analysis-end"]) element(id).disabled = analysis.running;
     element("analysis-method").querySelector('[value="white_lines"]').disabled = element("analysis-model").value === "eight";
     element("open-analysis").hidden = !job.run_id || analysis.running;
     element("analysis-progress").hidden = !analysis.running;
@@ -711,7 +711,8 @@ async function watchAnalysis() {
     const label = element("analysis-status");
     label.classList.toggle("error", job.status === "failed");
     if (analysis.running) {
-      label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage} · ${job.processed_frames} / ${job.total_frames || "待确定"} 帧。CPU 分析需要一些时间，可继续查看已有运行；刷新页面后会恢复进度。`;
+      const deviceName = job.config?.device === "gpu" ? "GPU 核显" : "CPU";
+      label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage} · ${job.processed_frames} / ${job.total_frames || "待确定"} 帧。正在用${deviceName}分析，可继续查看已有运行；刷新页面后会恢复进度。`;
       analysis.timer = setTimeout(watchAnalysis, 1000);
     } else if (job.status === "failed") {
       label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage}失败：${job.error}${job.run_id ? "。人物缓存已保留，可打开结果并重新运行场地标定。" : "。可调整参数后重新开始。"}`;
@@ -765,7 +766,7 @@ element("analysis-model").addEventListener("change", () => updateAnalysisOptions
 element("analysis-method").addEventListener("change", () => updateAnalysisOptions());
 element("start-analysis").addEventListener("click", async () => {
   const endText = element("analysis-end").value;
-  const payload = { clip_id: element("clip-select").value, pitch_model: element("analysis-model").value, calibration_method: element("analysis-method").value, pitch_length_m: Number(element("analysis-length").value), pitch_width_m: Number(element("analysis-width").value), imgsz: Number(element("analysis-imgsz").value), start_frame: Number(element("analysis-start").value), end_frame: endText === "" ? null : Number(endText) };
+  const payload = { clip_id: element("clip-select").value, pitch_model: element("analysis-model").value, calibration_method: element("analysis-method").value, pitch_length_m: Number(element("analysis-length").value), pitch_width_m: Number(element("analysis-width").value), imgsz: Number(element("analysis-imgsz").value), device: element("analysis-device").value, start_frame: Number(element("analysis-start").value), end_frame: endText === "" ? null : Number(endText) };
   if (!payload.clip_id) return;
   element("start-analysis").disabled = true;
   try {

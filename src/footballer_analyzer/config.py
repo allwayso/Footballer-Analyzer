@@ -27,6 +27,7 @@ class Config:
     end_frame: int | None = None
     stride: int = 1
     imgsz: int = 1280
+    device: str = "cpu"
     confidence: float = 0.1
     nms_iou: float = 0.5
     track_activation_threshold: float = 0.25
@@ -88,6 +89,8 @@ def config_from_dict(payload: dict) -> Config:
         value = getattr(config, key)
         if type(value) is not int or value < (0 if key == "start_frame" else 1):
             raise ValueError(f"{key} 必须是有效整数")
+    if config.device not in {"cpu", "gpu"}:
+        raise ValueError("device 仅支持 cpu 或 gpu")
     if config.end_frame is not None and (type(config.end_frame) is not int or config.end_frame <= config.start_frame):
         raise ValueError("end_frame 必须大于 start_frame")
     for key in ["confidence", "pitch_length_m", "pitch_width_m", "speed_limit_mps", "min_cutoff_hz"]:

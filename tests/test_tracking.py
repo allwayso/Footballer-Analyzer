@@ -10,7 +10,7 @@ import cv2
 import supervision as sv
 
 from footballer_analyzer.config import Config, config_from_dict
-from footballer_analyzer.detection import YoloDetector
+from footballer_analyzer.detection import YoloDetector, resolve_device
 from footballer_analyzer.pipeline import track
 from footballer_analyzer.storage import read_json, read_rows
 from footballer_analyzer.tracking import ByteTracker
@@ -76,12 +76,35 @@ class TrackingTests(unittest.TestCase):
             self.assertEqual(parameters["conf"], 0.1)
             self.assertEqual(parameters["iou"], 0.5)
             self.assertEqual(parameters["imgsz"], 1280)
+            self.assertEqual(parameters["device"], "cpu")
+
+    def test_detector_passes_requested_device_to_yolo(self):
+        """CPU 传 cpu，GPU 在可用时传 0；不可用必须报错而不是静默退回 CPU。"""
+        weights = Mock(spec=Path)
+        weights.is_file.return_value = True
+        image = np.zeros((64, 64, 3), dtype=np.uint8)
+        with patch("footballer_analyzer.detection.YOLO") as model_type, patch("footballer_analyzer.detection.sv.Detections.from_ultralytics"):
+            with patch("torch.cuda.is_available", return_value=False):
+                with self.assertRaisesRegex(ValueError, "GPU"):
+                    YoloDetector(weights, device="gpu")
+        with patch("footballer_analyzer.detection.YOLO") as model_type, patch("footballer_analyzer.detection.sv.Detections.from_ultralytics"), patch("torch.cuda.is_available", return_value=True):
+            detector = YoloDetector(weights, device="gpu")
+            detector.detect(image)
+            self.assertEqual(model_type.return_value.predict.call_args.kwargs["device"], 0)
+        for invalid in ["cuda", "dml", "gpu0", ""]:
+            with self.subTest(device=invalid), self.assertRaises(ValueError):
+                resolve_device(invalid)
+        self.assertEqual(resolve_device("cpu"), "cpu")
 
     def test_config_validates_tracking_parameters(self):
         """检测和激活阈值独立保存，非法缓冲与关联参数应被拒绝。"""
         payload = {"video": "video.mp4", "weights": "model.pt", "match_id": "test", "clip_id": "test"}
         config = config_from_dict(payload)
         self.assertLess(config.confidence, config.track_activation_threshold)
+        self.assertEqual(config.device, "cpu")
+        self.assertEqual(config_from_dict({**payload, "device": "gpu"}).device, "gpu")
+        with self.assertRaisesRegex(ValueError, "device"):
+            config_from_dict({**payload, "device": "dml"})
         for key, invalid in [("nms_iou", 1), ("nms_iou", float("nan")), ("lost_track_buffer_s", 0), ("minimum_matching_threshold", -1), ("track_activation_threshold", 0.1), ("track_activation_threshold", 0.9)]:
             with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
                 config_from_dict({**payload, key: invalid})

@@ -14,6 +14,7 @@ def main(argv=None):
     commands = parser.add_subparsers(dest="command", required=True)
     track_command = commands.add_parser("track", help="检测跟踪并保存原始轨迹")
     track_command.add_argument("--config", required=True)
+    track_command.add_argument("--device", choices=["cpu", "gpu"], help="覆盖配置中的推理设备；gpu 需要 CUDA 或 ROCm 版 PyTorch")
     retrack_command = commands.add_parser("retrack", help="复用检测缓存进行运动颜色重跟踪，不运行YOLO")
     retrack_command.add_argument("--run", required=True, type=Path)
     retrack_command.add_argument("--output-root", type=Path, default=ROOT / "outputs")
@@ -27,6 +28,7 @@ def main(argv=None):
     retrack_command.add_argument("--without-calibration", action="store_true")
     benchmark_command = commands.add_parser("benchmark", help="重新执行选定流水线，测量并比较阶段速度")
     benchmark_command.add_argument("--config", required=True)
+    benchmark_command.add_argument("--device", choices=["cpu", "gpu"], help="覆盖配置中的推理设备")
     benchmark_command.add_argument("--stages", nargs="+", choices=["tracking", "pitch", "ball"], default=["tracking", "pitch", "ball"])
     benchmark_command.add_argument("--repeat", type=int, default=1, help="正式测试轮数")
     benchmark_command.add_argument("--warmup", type=int, default=0, help="不计入结果的完整预热轮数")
@@ -58,9 +60,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         if args.command == "track":
+            from dataclasses import replace as dataclass_replace
+
             from .pipeline import track
 
-            track(load_config(args.config))
+            config = load_config(args.config)
+            if args.device:
+                config = dataclass_replace(config, device=args.device)
+            track(config)
         elif args.command == "retrack":
             from .motion_tracking import MotionConfig
             from .retracking import retrack
@@ -74,7 +81,7 @@ def main(argv=None):
             from .benchmark import print_benchmark, run_benchmark
 
             config = load_config(args.config)
-            overrides = {key: getattr(args, key) for key in ("start_frame", "end_frame") if getattr(args, key) is not None}
+            overrides = {key: getattr(args, key) for key in ("start_frame", "end_frame", "device") if getattr(args, key) is not None}
             result = run_benchmark(replace(config, **overrides), args.stages, args.repeat, args.warmup,
                                    args.ball_model, args.output_root, args.baseline)
             print_benchmark(result)

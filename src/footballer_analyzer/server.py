@@ -84,7 +84,7 @@ class ReviewApp:
         values.update(video=str(source), output_root=str(self.output_root), clip_id=source.stem, match_id=f"local_{source.stem}")
         preset = pitch_spec(payload.get("pitch_model", "eleven"))
         values.update(pitch_model=preset["model"], pitch_length_m=preset["length_m"], pitch_width_m=preset["width_m"], calibration_method="manual" if preset["model"] == "eight" else "white_lines")
-        for key in ["pitch_length_m", "pitch_width_m", "start_frame", "end_frame", "imgsz", "calibration_method"]:
+        for key in ["pitch_length_m", "pitch_width_m", "start_frame", "end_frame", "imgsz", "calibration_method", "device"]:
             if key in payload:
                 values[key] = payload[key]
         config = config_from_dict(values)
@@ -146,7 +146,7 @@ class ReviewApp:
         def worker():
             """完成后发布足球版本，失败保留上一份完成结果。"""
             try:
-                result = track_ball_run(run_dir, model_id, progress)
+                result = track_ball_run(run_dir, model_id, progress, device=manifest["config"].get("device", "cpu"))
                 with self.lock:
                     job.update(status="complete", stage="complete", result_id=result["result_id"])
             except Exception as error:

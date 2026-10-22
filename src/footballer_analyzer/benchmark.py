@@ -13,6 +13,7 @@ import cv2
 
 from .ball_pipeline import DEFAULT_MODEL, model_preset, track_ball_run
 from .config import Config, ROOT, config_from_dict
+from .detection import gpu_name
 from .performance import PerformanceRecorder
 from .pipeline import track
 from .storage import file_hash, new_id, read_json, versions, write_json
@@ -108,6 +109,7 @@ def run_benchmark(config: Config, stages=STAGES, repeat=1, warmup=0, ball_model=
     protocol = {
         "timing_version": 1, "stages": list(stages), "config": settings,
         "video_sha256": video_hash, "warmup": warmup, "torch_threads": 6,
+        "device": config.device,
         "tracking_weights_sha256": file_hash(config.weights) if "tracking" in stages else None,
         "ball_model": ball_model if preset else None,
         "ball_weights_sha256": file_hash(ROOT / preset["weights"]) if preset else None,
@@ -126,7 +128,10 @@ def run_benchmark(config: Config, stages=STAGES, repeat=1, warmup=0, ball_model=
         "schema_version": 1, "status": "running", "protocol": protocol,
         "repeat": repeat, "code": code_version(), "result_path": str(report_path.resolve()),
         "environment": {"platform": platform.platform(), "python": sys.version, "processor": platform.processor(),
-                        "torch_threads": torch.get_num_threads(), "opencv_threads": cv2.getNumThreads(), "versions": versions()},
+                        "torch_version": torch.__version__, "torch_threads": torch.get_num_threads(),
+                        "opencv_threads": cv2.getNumThreads(), "device": config.device,
+                        "gpu_available": bool(torch.cuda.is_available()), "gpu_name": gpu_name(),
+                        "versions": versions()},
         "records": [], "summary": {},
     }
     write_json(report_path, result)
@@ -146,7 +151,7 @@ def run_benchmark(config: Config, stages=STAGES, repeat=1, warmup=0, ball_model=
             if "pitch" in stages:
                 calibrate_run(run_dir, performance=current)
             if "ball" in stages:
-                track_ball_run(run_dir, ball_model, performance=current)
+                track_ball_run(run_dir, ball_model, performance=current, device=config.device)
             if {metric.stage for metric in current.metrics} != set(stages) or len(current.metrics) != len(stages):
                 raise RuntimeError("流水线没有完整上报所选阶段的性能数据")
             if not is_warmup:
