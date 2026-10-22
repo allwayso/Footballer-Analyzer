@@ -68,7 +68,7 @@ Detection and reporting are separate stages: correcting identities or calibratio
 
 ## Quick Start
 
-The commands below use Windows / PowerShell. Requires **Python 3.11+; 3.12 recommended**. Detection currently runs on the CPU.
+The commands below use Windows / PowerShell. Requires **Python 3.11+; 3.12 recommended**. Detection runs on the CPU by default and can optionally use an integrated GPU — see [GPU inference](docs/22-核显推理与设备切换.md).
 
 ### 1. Install
 
