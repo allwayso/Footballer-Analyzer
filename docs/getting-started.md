@@ -15,6 +15,14 @@ python -m venv .venv
 & .\.venv\Scripts\python.exe -m pip install -e . -c configs/constraints-tested.txt
 ```
 
+需要用 NVIDIA 显卡加速检测时，把 CPU 版 PyTorch 换成 CUDA 版（只需 NVIDIA 驱动，wheel 自带 CUDA 运行时）：
+
+```powershell
+& .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+```
+
+之后用配置项 `device: gpu`、命令行 `--device gpu` 或前端下拉框切换；GPU 不可用时会明确报错，不会静默退回 CPU。详见 [22 核显推理与设备切换](22-核显推理与设备切换.md)。
+
 已安装本项目时，可直接从这里开始：
 
 ```powershell

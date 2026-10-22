@@ -59,9 +59,8 @@ ENVIRONMENT = {
     "platform": platform.platform(),
     "python": sys.version.split()[0],
     "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (sm_89)",
-    "torch_cpu_env": "2.14.1+cpu",
-    "torch_gpu_env": "2.11.0+cu128",
-    "note": "CPU 与 GPU 数据在同一虚拟环境内顺序采集，避免跨环境差异",
+    "torch": "2.14.1+cu130",
+    "note": "CPU 与 GPU 数据在同一虚拟环境内顺序采集，仅切换 device 参数，避免跨环境差异",
 }
 
 

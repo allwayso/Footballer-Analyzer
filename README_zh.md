@@ -68,7 +68,7 @@ flowchart LR
 
 ## 快速开始
 
-以下为 Windows / PowerShell 的本地启动方式。要求 **Python 3.11+，推荐 3.12**；检测默认使用 CPU，可选用核显推理，见 [核显推理与设备切换](docs/22-核显推理与设备切换.md)。
+以下为 Windows / PowerShell 的本地启动方式。要求 **Python 3.11+，推荐 3.12**；检测默认使用 CPU，可选用 GPU 推理，见 [核显推理与设备切换](docs/22-核显推理与设备切换.md)。
 
 ### 1. 安装
 
@@ -80,6 +80,14 @@ python -m venv .venv
 & .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 & .\.venv\Scripts\python.exe -m pip install -e . -c configs/constraints-tested.txt
 ```
+
+若要在 NVIDIA 显卡上运行检测，把上面的 CPU 版 PyTorch 换成 CUDA 版即可（只需 NVIDIA 驱动，wheel 自带 CUDA 运行时）：
+
+```powershell
+& .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+```
+
+随后在配置里设 `device: gpu`、命令行加 `--device gpu`，或在前端下拉框选择即可。
 
 ### 2. 准备视频与模型
 
