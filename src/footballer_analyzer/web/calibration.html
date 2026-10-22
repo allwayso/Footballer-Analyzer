@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>场地标定 · Touchline</title>
+  <link rel="stylesheet" href="/materials.css">
+  <link rel="stylesheet" href="/calibration.css">
+  <script type="module" src="/calibration.js"></script>
+</head>
+<body>
+  <aside class="navigation">
+    <a class="brand" href="/materials" aria-label="Touchline 素材管理"><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="5" y="8" width="30" height="24" rx="3"/><path d="M20 8v24M5 15h6v10H5m30-10h-6v10h6"/><circle cx="20" cy="20" r="5"/></svg><span>Touchline<small>足球分析工作室</small></span></a>
+    <p class="nav-label">工作空间</p>
+    <nav aria-label="主导航">
+      <a href="/materials"><span class="nav-symbol">▦</span>素材管理</a>
+      <a class="selected" href="/calibration" aria-current="page"><span class="nav-symbol">⌖</span>场地标定</a>
+      <a href="/"><span class="nav-symbol">◈</span>追踪工作台</a>
+      <a href="/field-review"><span class="nav-symbol">⌖</span>场内轨迹校对</a>
+    </nav>
+    <div class="nav-bottom"><div class="workspace-icon">T</div><div>本地工作空间<small><span class="connection-dot"></span>视频保存在本机</small></div></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><span>工作空间 <span class="breadcrumb-separator">/</span> <strong>场地标定</strong></span><span class="local-label"><span class="connection-dot"></span>本地分析运行</span></header>
+    <main>
+      <header class="page-heading"><div><h1>场地标定</h1><p id="run-description">选择已完成的人物追踪运行，检查并校准比赛画面。</p></div><label class="run-picker">分析运行<select id="run-select" aria-label="选择分析运行"></select></label></header>
+      <div id="notice" class="notice" role="status">正在读取分析运行…</div>
+      <section class="calibration-layout" aria-label="场地标定工作区">
+        <section class="viewer" aria-label="视频帧与帧控制">
+          <div class="viewer-head"><div><strong id="clip-label">等待选择运行</strong><span id="frame-label">FRAME —</span></div><label class="overlay-toggle"><input id="show-overlay" type="checkbox" checked>模型叠加</label></div>
+          <div class="video-surface"><canvas id="video-canvas" width="1920" height="1080" aria-label="可进行标定点选的源视频画面"></canvas></div>
+          <div class="transport"><button id="previous" aria-label="上一帧" title="上一帧">↤</button><button id="play" aria-label="播放" title="播放或暂停">▶</button><button id="next" aria-label="下一帧" title="下一帧">↦</button><span id="time-label">0.00 / 0.00 s</span><input id="frame-slider" type="range" min="0" max="1" value="0" aria-label="视频源帧"><label>源帧<input id="frame-number" type="number" min="0" value="0"></label><button id="jump">跳转</button></div>
+        </section>
+        <aside class="settings" aria-label="标定设置">
+          <section class="settings-block"><div class="block-heading"><h2>场地模型</h2><span id="calibration-status" class="status-tag">待标定</span></div>
+            <div class="form-grid"><label>比赛制式<select id="pitch-model"><option value="eleven">十一人制</option><option value="eight">八人制</option></select></label><label>标定方式<select id="method"><option value="manual">参考点配对 · 固定镜头</option><option value="white_lines">逐帧白线 · 运动镜头</option></select></label></div>
+            <div class="form-grid dimensions"><label>长度 · m<input id="pitch-length" type="number" min="1" step="0.01"></label><label>宽度 · m<input id="pitch-width" type="number" min="1" step="0.01"></label></div>
+            <p id="calibration-summary" class="summary">选择运行以查看标定状态。</p>
+            <div id="manual-controls"><div class="model-wrap"><svg id="reference-pitch" role="img" aria-label="可点击的场地参考点模型"></svg></div><label>参考点<select id="landmark-select"><option value="">选择场地参考点</option></select></label><p id="landmark-status" class="hint">先选择场地模型上的地面点，再点击左侧画面中对应位置。</p>
+              <div class="action-row"><button id="undo-point" class="quiet" aria-label="撤销上一配对" title="撤销上一配对">↶</button><button id="clear-points" class="quiet">清空配对</button><button id="point-mode" class="secondary">开始点选</button></div>
+              <div class="table-scroll point-table"><table><thead><tr><th>参考点</th><th>图像位置 · px</th><th></th></tr></thead><tbody id="point-rows"></tbody></table></div>
+              <details class="advanced"><summary>有效区间与可靠区域</summary><div class="form-grid"><label>起始帧（含）<input id="start-frame" type="number" min="0"></label><label>结束帧（不含）<input id="end-frame" type="number" min="1"></label></div><div class="action-row"><button id="roi-mode" class="quiet">点选可靠区域</button><button id="clear-roi" class="quiet">恢复默认区域</button></div><p class="hint">通常保持默认；仅在需要排除不可靠地面时设置区域。</p></details>
+              <button id="preview" class="primary full-width">预览标定</button>
+            </div>
+            <div id="auto-controls" hidden><button id="run-auto" class="primary full-width">运行逐帧白线标定</button><p id="job-status" class="summary">适用于运动镜头，将逐帧匹配球场白线。</p><button id="save-review" class="secondary full-width">保存验收状态</button></div>
+            <label class="review-check"><input id="reviewed" type="checkbox">已回看模型叠加、视频画面和场地尺寸</label>
+            <div class="review-actions"><button id="save" class="secondary full-width" disabled>确认并保存</button><button id="discard" class="text-button full-width">撤销草稿，恢复已保存标定</button></div>
+          </section>
+        </aside>
+      </section>
+      <footer class="page-footnote"><span>至少配对四个分布充分的地面点，建议六点以上；保存前请在不同帧检查模型贴合。</span><span>Touchline 足球分析工作室</span></footer>
+    </main>
+  </div>
+</body>
+</html>

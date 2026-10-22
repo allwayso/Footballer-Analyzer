@@ -17,8 +17,8 @@ from .config import ROOT, config_from_dict, load_config
 from .identity import load_players, validate_bindings
 from .pitch_geometry import pitch_polylines
 from .pitch_models import PRESETS, pitch_landmarks, pitch_spec
-from .storage import new_id, read_json, read_rows, read_yaml, write_json, write_yaml
-from .video import read_frame
+from .storage import file_hash, new_id, read_json, read_rows, read_yaml, write_json, write_yaml
+from .video import inspect_video, read_frame
 
 from .field_review import field_segments, merge_groups
 from .reassociation import (association_view, commit_result, compute_result,
@@ -40,6 +40,7 @@ class ReviewApp:
         self.output_root = Path(output_root).resolve()
         self.lock = threading.RLock()
         self.track_cache = {}
+        self.material_id_cache = {}
         self.calibration_jobs = {}
         self.association_jobs = {}
         self.clips_root = Path(clips_root).resolve()
@@ -63,10 +64,12 @@ class ReviewApp:
             if manifest["status"] != "complete" or manifest.get("kind") == "white_line_review":
                 continue
             video = str(Path(manifest["config"]["video"]).resolve())
-            counts = completed.setdefault(video, {"tracking_runs": 0, "calibrated_runs": 0})
+            counts = completed.setdefault(video, {"tracking_runs": 0, "calibrated_runs": 0, "ball_runs": 0, "report_runs": 0})
             counts["tracking_runs"] += 1
             if (manifest_path.parent / "calibration.yaml").is_file():
                 counts["calibrated_runs"] += 1
+            counts["ball_runs"] += len(ball_versions(manifest_path.parent))
+            counts["report_runs"] += sum(read_json(path).get("status") == "complete" for path in (manifest_path.parent / "reports").glob("report_*/manifest.json"))
         entries = []
         for path in sorted(self.clips_root.glob("*")):
             if path.is_file() and path.suffix.lower() in {".mp4", ".mov", ".avi", ".mkv"}:
@@ -74,7 +77,13 @@ class ReviewApp:
                     source = self.clip_path(path.name)
                 except ValueError:
                     continue
-                entries.append({"clip_id": path.name, "size_bytes": source.stat().st_size, **completed.get(str(source), {"tracking_runs": 0, "calibrated_runs": 0})})
+                stat = source.stat()
+                fingerprint = (stat.st_size, stat.st_mtime_ns)
+                with self.lock:
+                    cached = self.material_id_cache.get(str(source))
+                    material_id = cached[1] if cached and cached[0] == fingerprint else file_hash(source)
+                    self.material_id_cache[str(source)] = (fingerprint, material_id)
+                entries.append({"clip_id": path.name, "material_id": material_id, "size_bytes": stat.st_size, **completed.get(str(source), {"tracking_runs": 0, "calibrated_runs": 0, "ball_runs": 0, "report_runs": 0})})
         return entries
 
     def start_analysis(self, payload):
@@ -479,6 +488,11 @@ def handler_for(app):
                 if path == "/api/ball-job":
                     with app.lock:
                         return self.send_json(dict(app.ball_job))
+                metadata_match = re.fullmatch(r"/api/clips/([^/]+)/metadata", path)
+                if metadata_match:
+                    source = app.clip_path(metadata_match[1])
+                    info = inspect_video(source)
+                    return self.send_json({"duration_s": info.frame_count / info.fps})
                 if path == "/api/pitch-models":
                     query = parse_qs(urlsplit(self.path).query)
                     models = query.get("model", list(PRESETS))
@@ -510,8 +524,9 @@ def handler_for(app):
                         if action == "calibration-job":
                             return self.send_json(dict(app.calibration_jobs.get(run_id, {"status": "idle"})))
                         if action == "ball":
-                            model_id = parse_qs(urlsplit(self.path).query).get("model", [None])[0]
-                            return self.send_json(load_ball_result(run_dir, model_id))
+                            query = parse_qs(urlsplit(self.path).query)
+                            model_id = query.get("model", [None])[0]
+                            return self.send_json(load_ball_result(run_dir, model_id, query.get("version", [None])[0]))
                         mask_match = re.fullmatch(r"white-lines/(\d+)\.png", action)
                         if mask_match:
                             frame_index = int(mask_match[1])
@@ -550,6 +565,10 @@ def handler_for(app):
                     report_path = app.run_dir(run_id) / "reports" / report_id / file_name
                     return self.send_bytes(report_path.read_bytes(), mimetypes.guess_type(file_name)[0] or "application/octet-stream")
                 static_paths = {"/": "index.html", "/app.js": "app.js", "/style.css": "style.css", "/field-review": "field-review.html", "/field-review.js": "field-review.js", "/field-review.css": "field-review.css"}
+                static_paths.update({"/materials": "materials.html", "/materials.css": "materials.css", "/materials.js": "materials.js", "/calibration": "calibration.html", "/calibration.css": "calibration.css", "/calibration.js": "calibration.js"})
+                for page in ("identity", "tracking", "report"):
+                    static_paths.update({f"/{page}": f"{page}.html", f"/{page}.css": f"{page}.css", f"/{page}.js": f"{page}.js"})
+                static_paths.update({"/workspace.js": "workspace.js", "/workspace.css": "workspace.css"})
                 if path in static_paths:
                     static_path = WEB / static_paths[path]
                     return self.send_bytes(static_path.read_bytes(), (mimetypes.guess_type(static_path.name)[0] or "text/plain") + "; charset=utf-8")

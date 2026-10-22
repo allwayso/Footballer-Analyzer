@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>素材管理 · Touchline</title>
+  <link rel="stylesheet" href="/materials.css">
+  <script type="module" src="/materials.js"></script>
+</head>
+<body>
+  <aside class="navigation">
+    <a class="brand" href="/materials" aria-label="Touchline 素材管理"><svg viewBox="0 0 40 40" aria-hidden="true"><rect x="5" y="8" width="30" height="24" rx="3"/><path d="M20 8v24M5 15h6v10H5m30-10h-6v10h6"/><circle cx="20" cy="20" r="5"/></svg><span>Touchline<small>足球分析工作室</small></span></a>
+    <p class="nav-label">工作空间</p>
+    <nav aria-label="主导航">
+      <a class="selected" href="/materials" aria-current="page"><span class="nav-symbol">▦</span>素材管理<span id="nav-count" class="nav-count">—</span></a>
+      <a href="/calibration"><span class="nav-symbol">⌖</span>场地标定</a>
+      <button data-placeholder="比赛管理"><span class="nav-symbol">⚑</span>比赛管理</button>
+      <button data-placeholder="球队与球员"><span class="nav-symbol">♧</span>球队与球员</button>
+      <button data-placeholder="报告中心"><span class="nav-symbol">▤</span>报告中心</button>
+    </nav>
+    <div class="nav-bottom"><div class="workspace-icon">T</div><div>本地工作空间<small><span class="connection-dot"></span>视频保存在本机</small></div></div>
+  </aside>
+  <div class="workspace">
+    <header class="topbar"><span>工作空间 <span class="breadcrumb-separator">/</span> <strong>素材管理</strong></span><span class="local-label"><span class="connection-dot"></span>本地素材库</span></header>
+    <main>
+      <header class="page-heading"><div><h1>素材管理</h1><p>从一段比赛画面，开始每一次分析。</p></div><button class="import-button" data-placeholder="导入素材"><span aria-hidden="true">＋</span> 导入素材</button></header>
+      <section class="library" aria-labelledby="library-title">
+        <div class="library-heading"><div class="library-tab"><h2 id="library-title">全部素材</h2><span id="total-count">—</span></div><p id="storage-summary" class="storage-summary">正在读取素材库</p></div>
+        <div class="toolbar"><label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input id="search" type="search" placeholder="搜索素材编号或原始文件名" aria-label="搜索素材"></label><label class="sort-box"><span>排序</span><select id="sort" aria-label="素材排序"><option value="id">素材编号</option><option value="duration-desc">时长从长到短</option><option value="duration-asc">时长从短到长</option></select></label><button id="refresh" class="refresh-button" aria-label="刷新素材列表" title="刷新素材列表"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M5.5 7a8 8 0 0 1 13-1L20 9M4 15l1.5 3a8 8 0 0 0 13-1"/></svg></button></div>
+        <div id="load-message" class="load-message" role="status">正在读取本地视频…</div>
+        <div class="table-scroll" tabindex="0" aria-label="素材表格，可横向滚动">
+          <table><caption class="sr-only">视频素材列表与分析入口</caption><thead><tr><th scope="col">首帧截图</th><th scope="col">素材编号</th><th scope="col">比赛日期</th><th scope="col">主队</th><th scope="col">客队</th><th scope="col">片段起点</th><th scope="col">时长</th><th scope="col" class="feature-column">场地标定</th><th scope="col" class="feature-column">人物识别</th><th scope="col" class="feature-column">足球追踪</th><th scope="col" class="feature-column">分析报告</th><th scope="col"><span class="sr-only">更多操作</span></th></tr></thead><tbody id="material-rows"></tbody></table>
+        </div>
+        <div class="pagination"><span id="range-summary">共 0 条素材</span><div class="pagination-controls"><label>每页 <select id="page-size" aria-label="每页素材数量"><option value="8">8 条</option><option value="16">16 条</option><option value="32">32 条</option></select></label><button id="previous" aria-label="上一页">‹</button><span id="page-number">1 / 1</span><button id="next" aria-label="下一页">›</button></div></div>
+      </section>
+      <footer class="page-footnote"><span><span class="footnote-mark">i</span> 点击分析入口，打开对应素材的工作页面。</span><span>Touchline 足球分析工作室</span></footer>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
