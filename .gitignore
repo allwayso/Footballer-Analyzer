@@ -21,7 +21,6 @@ dist/
 .venv/
 venv/
 env/
-.venv-gpu/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
