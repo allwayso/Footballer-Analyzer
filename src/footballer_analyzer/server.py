@@ -166,11 +166,11 @@ class ReviewApp:
         return candidate
 
     def runs(self):
-        """按运行名称倒序返回片段标识、运行状态与处理帧数列表。"""
+        """按运行名称倒序返回片段标识、运行状态、处理帧数与推理设备列表。"""
         entries = []
         for path in sorted(self.output_root.glob("run_*/manifest.json"), reverse=True):
             manifest = read_json(path)
-            entries.append({"run_id": manifest["run_id"], "status": manifest["status"], "clip_id": manifest["config"]["clip_id"], "processed_frames": manifest.get("processed_frames", 0)})
+            entries.append({"run_id": manifest["run_id"], "status": manifest["status"], "clip_id": manifest["config"]["clip_id"], "processed_frames": manifest.get("processed_frames", 0), "device": manifest["config"].get("device", "cpu")})
         return entries
 
     def data(self, run_id):
