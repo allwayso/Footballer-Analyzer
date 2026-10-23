@@ -49,11 +49,11 @@ def ball_versions(run_dir):
     return versions
 
 
-def load_ball_result(run_dir, model_id=None):
+def load_ball_result(run_dir, model_id=None, version=None):
     """读取指定模型的最新完成结果；无结果返回 None，旧运行也可直接读取。"""
     if model_id is not None and model_id not in MODEL_PRESETS:
         raise ValueError("未知足球模型")
-    metadata = next((entry for entry in ball_versions(run_dir) if model_id is None or entry["model_id"] == model_id), None)
+    metadata = next((entry for entry in ball_versions(run_dir) if (model_id is None or entry["model_id"] == model_id) and (version is None or entry["result_id"] == version)), None)
     if metadata is None:
         return None
     result_id = metadata["result_id"]

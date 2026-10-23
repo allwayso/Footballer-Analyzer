@@ -82,6 +82,19 @@ class ServerTests(unittest.TestCase):
             self.assertEqual(app.ball_job["status"], "failed")
             self.assertEqual(app.ball_job["error"], "模拟足球失败")
 
+    def test_material_id_survives_rename_and_changes_with_content(self):
+        """素材编号随内容保持稳定，重命名不改变编号而替换内容会更新。"""
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "original.mp4"
+            source.write_bytes(b"original video bytes")
+            app = ReviewApp(Path(temporary) / "output", temporary)
+            original_id = app.clips()[0]["material_id"]
+            self.assertRegex(original_id, r"^[0-9a-f]{64}$")
+            renamed = source.rename(source.with_name("renamed.mp4"))
+            self.assertEqual(app.clips()[0]["material_id"], original_id)
+            renamed.write_bytes(b"replacement video bytes with different size")
+            self.assertNotEqual(app.clips()[0]["material_id"], original_id)
+
     def test_clip_preview_and_analysis_http_routes(self):
         """验证素材预览、后台状态与启动参数路由，拒绝素材越界和跨源启动。"""
         with tempfile.TemporaryDirectory() as temporary:
@@ -97,6 +110,11 @@ class ServerTests(unittest.TestCase):
                     self.assertEqual(json.load(response)[0]["clip_id"], video.name)
                 with urlopen(base + f"/api/clips/{video.name}/preview") as response:
                     self.assertEqual(response.headers["Content-Type"], "image/jpeg")
+                with urlopen(base + f"/api/clips/{video.name}/metadata") as response:
+                    self.assertGreater(json.load(response)["duration_s"], 0)
+                for path in ["/materials", "/materials.css", "/materials.js"]:
+                    with urlopen(base + path) as response:
+                        self.assertEqual(response.status, 200)
                 with urlopen(base + "/api/analysis-job") as response:
                     self.assertEqual(json.load(response)["status"], "idle")
                 headers = {"Content-Type": "application/json"}
