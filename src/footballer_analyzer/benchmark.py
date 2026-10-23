@@ -13,6 +13,7 @@ import cv2
 
 from .ball_pipeline import DEFAULT_MODEL, model_preset, track_ball_run
 from .config import Config, ROOT, config_from_dict
+from .detection import gpu_name
 from .performance import PerformanceRecorder
 from .pipeline import track
 from .storage import file_hash, new_id, read_json, versions, write_json
@@ -53,8 +54,23 @@ def code_version():
 
 
 def compare_results(current, baseline):
-    """比较相同输入协议的平均阶段速度；不同素材、配置或权重拒绝比较。"""
-    if baseline.get("status") != "complete" or baseline.get("protocol") != current["protocol"]:
+    """比较相同输入协议的平均阶段速度；不同素材、配置或权重拒绝比较。
+
+    推理设备允许不同（这正是 CPU 与 GPU 对比的场景），但除 device 外的协议
+    必须完全一致，否则速度差不能归因于设备本身。
+    """
+    if baseline.get("status") != "complete":
+        raise ValueError("基线未完成；请使用相同素材、区间、配置、模型及预热次数")
+    current_protocol = dict(current["protocol"])
+    baseline_protocol = dict(baseline.get("protocol", {}))
+    baseline_device = baseline_protocol.pop("device", None)
+    current_device = current_protocol.pop("device", None)
+    # 配置快照里也带 device，比较前需一并排除，否则 CPU 与 GPU 无法互比。
+    for protocol in (current_protocol, baseline_protocol):
+        snapshot = dict(protocol.get("config", {}))
+        snapshot.pop("device", None)
+        protocol["config"] = snapshot
+    if baseline_protocol != current_protocol:
         raise ValueError("基线未完成或测试协议不同；请使用相同素材、区间、配置、模型及预热次数")
     for stage in current["protocol"]["stages"]:
         fps = baseline.get("summary", {}).get(stage, {}).get("fps")
@@ -66,6 +82,7 @@ def compare_results(current, baseline):
         comparisons[stage] = {
             "baseline_fps": previous["fps"], "current_fps": summary["fps"],
             "speedup": summary["fps"] / previous["fps"],
+            "baseline_device": baseline_device, "current_device": current_device,
         }
     return comparisons
 
@@ -108,6 +125,7 @@ def run_benchmark(config: Config, stages=STAGES, repeat=1, warmup=0, ball_model=
     protocol = {
         "timing_version": 1, "stages": list(stages), "config": settings,
         "video_sha256": video_hash, "warmup": warmup, "torch_threads": 6,
+        "device": config.device,
         "tracking_weights_sha256": file_hash(config.weights) if "tracking" in stages else None,
         "ball_model": ball_model if preset else None,
         "ball_weights_sha256": file_hash(ROOT / preset["weights"]) if preset else None,
@@ -126,7 +144,10 @@ def run_benchmark(config: Config, stages=STAGES, repeat=1, warmup=0, ball_model=
         "schema_version": 1, "status": "running", "protocol": protocol,
         "repeat": repeat, "code": code_version(), "result_path": str(report_path.resolve()),
         "environment": {"platform": platform.platform(), "python": sys.version, "processor": platform.processor(),
-                        "torch_threads": torch.get_num_threads(), "opencv_threads": cv2.getNumThreads(), "versions": versions()},
+                        "torch_version": torch.__version__, "torch_threads": torch.get_num_threads(),
+                        "opencv_threads": cv2.getNumThreads(), "device": config.device,
+                        "gpu_available": bool(torch.cuda.is_available()), "gpu_name": gpu_name(),
+                        "versions": versions()},
         "records": [], "summary": {},
     }
     write_json(report_path, result)
@@ -146,7 +167,7 @@ def run_benchmark(config: Config, stages=STAGES, repeat=1, warmup=0, ball_model=
             if "pitch" in stages:
                 calibrate_run(run_dir, performance=current)
             if "ball" in stages:
-                track_ball_run(run_dir, ball_model, performance=current)
+                track_ball_run(run_dir, ball_model, performance=current, device=config.device)
             if {metric.stage for metric in current.metrics} != set(stages) or len(current.metrics) != len(stages):
                 raise RuntimeError("流水线没有完整上报所选阶段的性能数据")
             if not is_warmup:

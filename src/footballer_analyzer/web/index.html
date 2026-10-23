@@ -24,7 +24,7 @@
   </aside>
 
   <main>
-    <header class="page-header"><div><div class="eyebrow">TRACKING WORKSPACE <span>/</span> 01</div><h1>球员追踪与位置校验</h1><p id="source-description">用同一帧核对原始画面、追踪身份与球场投影。</p></div><div class="header-tags"><span class="tag">CPU · 离线</span><span class="tag live"><span class="online-dot"></span> 本地工作区</span></div></header>
+    <header class="page-header"><div><div class="eyebrow">TRACKING WORKSPACE <span>/</span> 01</div><h1>球员追踪与位置校验</h1><p id="source-description">用同一帧核对原始画面、追踪身份与球场投影。</p></div><div class="header-tags"><span class="tag" id="inference-device-tag">本地 · 离线</span><span class="tag live"><span class="online-dot"></span> 本地工作区</span></div></header>
     <div id="notice" class="notice" role="status">正在读取运行数据…</div>
 
     <section class="panel source-panel" aria-labelledby="source-title">
@@ -40,6 +40,7 @@
             <label>场地宽 · m<input id="analysis-width" type="number" min="1" step="0.1" value="68"></label>
           </div></details>
           <label>人物检测精度<select id="analysis-imgsz"><option value="1920">1920 · 精度优先</option><option value="1280">1280 · 速度优先</option></select></label>
+          <label>推理设备<select id="analysis-device"><option value="cpu">CPU · 通用</option><option value="gpu">GPU · 需 CUDA / ROCm 版 PyTorch</option></select></label>
           <details class="analysis-window"><summary>限定分析区间（可选）</summary><div class="form-row"><label>开始源帧（含）<input id="analysis-start" type="number" min="0" step="1" value="0"></label><label>结束源帧（不含，留空至末尾）<input id="analysis-end" type="number" min="1" step="1" placeholder="视频末尾"></label></div></details>
           <div class="button-row"><button id="start-analysis" class="primary" disabled>开始人物追踪</button><button id="refresh-clips" class="quiet">刷新素材</button><button id="open-analysis" hidden>打开人物结果</button></div>
           <progress id="analysis-progress" max="1" value="0" hidden aria-label="当前分析阶段进度"></progress>

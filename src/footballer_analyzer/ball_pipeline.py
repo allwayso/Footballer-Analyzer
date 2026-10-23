@@ -7,6 +7,7 @@ import time
 from .ball_detection import detect
 from .ball_tracking import BallSelectionConfig, select_ball_candidates
 from .config import ROOT
+from .detection import gpu_name, resolve_device
 from .performance import PerformanceRecorder
 from .storage import file_hash, new_id, read_json, write_json
 from .video import inspect_video, read_frames
@@ -73,12 +74,13 @@ def select_in_windows(records, fps, image_size, config, window_size=250, context
     return selected
 
 
-def track_ball_run(run_dir, model_id=DEFAULT_MODEL, progress=None, performance: PerformanceRecorder | None = None):
+def track_ball_run(run_dir, model_id=DEFAULT_MODEL, progress=None, performance: PerformanceRecorder | None = None, device="cpu"):
     """逐源帧补跑足球，保存候选与真实选中观测，成功后发布独立结果版本。
 
     只读取人物清单和源视频，不读取或修改标定；progress 接收阶段、已处理与总帧数。
     即使人物有抽帧，足球仍覆盖清单内每个源帧；源视频指纹不符或解码不足时失败。
     performance 可选，记录本次足球检测和筛选耗时及选中帧数。
+    device 为 cpu 或 gpu，沿用人物运行的推理设备，便于两端速度与结果对照。
     """
     run_dir = Path(run_dir)
     manifest = read_json(run_dir / "manifest.json")
@@ -103,6 +105,8 @@ def track_ball_run(run_dir, model_id=DEFAULT_MODEL, progress=None, performance: 
         "start_frame": start, "end_frame": end, "fps": info.fps, "stride": 1,
         "confidence": 0.05, "overlap": 0.2, "filter": asdict(settings),
         "filter_window": 250, "filter_context": 25, "processed_frames": 0,
+        "inference": {"device_requested": device, "backend": "ultralytics-torch",
+                      "gpu_name": gpu_name() if device == "gpu" else ""},
     }
     write_json(result_dir / "manifest.json", metadata)
     started = time.perf_counter()
@@ -112,12 +116,13 @@ def track_ball_run(run_dir, model_id=DEFAULT_MODEL, progress=None, performance: 
 
         torch.set_num_threads(6)
         model = YOLO(str(weights))
+        target = resolve_device(device)
         records = []
         total = end - start
         if progress:
             progress("ball_detecting", 0, total)
         for packet in read_frames(video, start, end, 1):
-            candidates = detect(model, packet.image, preset["imgsz"], preset["tile"], 0.2, 0.05)
+            candidates = detect(model, packet.image, preset["imgsz"], preset["tile"], 0.2, 0.05, target)
             records.append({"frame": packet.frame_index, "candidates": candidates})
             if len(records) % 25 == 0 or len(records) == total:
                 metadata["processed_frames"] = len(records)

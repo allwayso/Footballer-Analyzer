@@ -8,7 +8,7 @@ import time
 import cv2
 
 from .config import Config
-from .detection import YoloDetector
+from .detection import YoloDetector, gpu_name
 from .performance import PerformanceRecorder
 from .storage import DETECTION_SCHEMA, TRACK_SCHEMA, RowWriter, file_hash, new_id, versions, write_json, write_yaml
 from .reassociation import EvidenceCollector, compute_result, commit_result, evidence_signature
@@ -38,11 +38,13 @@ def track(config: Config, progress=None, performance: PerformanceRecorder | None
         "config": config.snapshot(), "video": info.snapshot(),
         "video_sha256": file_hash(config.video), "weights_sha256": file_hash(config.weights),
         "start_frame": config.start_frame, "end_frame": end_frame,
+        "inference": {"device_requested": config.device, "backend": "ultralytics-torch",
+                      "gpu_name": gpu_name() if config.device == "gpu" else ""},
         "versions": versions(),
     }
     write_json(run_dir / "manifest.json", manifest)
     try:
-        detector = YoloDetector(config.weights, config.imgsz, config.confidence, config.nms_iou)
+        detector = YoloDetector(config.weights, config.imgsz, config.confidence, config.nms_iou, config.device)
         tracker = create_tracker(config, info.fps)
         manifest["tracking"] = tracker.config.snapshot() if hasattr(tracker, "config") else {"algorithm": "bytetrack-legacy"}
         write_json(run_dir / "manifest.json", manifest)

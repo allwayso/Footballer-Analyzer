@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "collected_at": "2026-10-22",
+  "environment": {
+    "cpu": "AMD64 Family 25 Model 68 Stepping 1, AuthenticAMD",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "python": "3.13.13",
+    "gpu": "NVIDIA GeForce RTX 4060 Laptop GPU (sm_89)",
+    "torch_collect": "2.11.0+cu128",
+    "torch_deployed": "2.14.1+cu130",
+    "note": "CPU 与 GPU 数据在同一虚拟环境内顺序采集，仅切换 device 参数，避免跨环境差异"
+  },
+  "stage_throughput_fps": [
+    {
+      "stage": "人物追踪",
+      "cpu": 4.36,
+      "gpu": 9.2,
+      "speedup": 2.110091743119266,
+      "note": "检测 + 跟踪 + 产物写盘"
+    },
+    {
+      "stage": "逐帧白线标定",
+      "cpu": 8.13,
+      "gpu": 8.08,
+      "speedup": 0.9938499384993849,
+      "note": "无神经网络，GPU 不介入"
+    },
+    {
+      "stage": "足球追踪",
+      "cpu": 3.79,
+      "gpu": 9.8,
+      "speedup": 2.5857519788918206,
+      "note": "每帧 6 块 640 切片检测"
+    }
+  ],
+  "clips": [
+    {
+      "clip": "barca_girona_05m00s",
+      "boxes_per_frame": 80,
+      "cpu_fps": 3.65,
+      "gpu_fps": 6.27,
+      "end_to_end_speedup": 1.72,
+      "inference_speedup": 10.56,
+      "teams_ms_per_frame": 18.4
+    },
+    {
+      "clip": "barca_girona_85m00s",
+      "boxes_per_frame": 43,
+      "cpu_fps": 4.26,
+      "gpu_fps": 8.59,
+      "end_to_end_speedup": 2.02,
+      "inference_speedup": 10.74,
+      "teams_ms_per_frame": 8.8
+    },
+    {
+      "clip": "clip_105m00s",
+      "boxes_per_frame": 46,
+      "cpu_fps": 4.34,
+      "gpu_fps": 8.93,
+      "end_to_end_speedup": 2.05,
+      "inference_speedup": 9.42,
+      "teams_ms_per_frame": 10.8
+    }
+  ],
+  "imgsz": [
+    {
+      "imgsz": 640,
+      "cpu_ms": 23.8,
+      "gpu_ms": 10.2,
+      "cpu_fps": 42.0,
+      "gpu_fps": 97.7,
+      "speedup": 2.3333333333333335
+    },
+    {
+      "imgsz": 1280,
+      "cpu_ms": 65.4,
+      "gpu_ms": 12.8,
+      "cpu_fps": 15.3,
+      "gpu_fps": 78.3,
+      "speedup": 5.109375
+    },
+    {
+      "imgsz": 1920,
+      "cpu_ms": 139.3,
+      "gpu_ms": 13.6,
+      "cpu_fps": 7.2,
+      "gpu_fps": 73.4,
+      "speedup": 10.24264705882353
+    }
+  ],
+  "fp16_probe": {
+    "fp32_ms": 14.0,
+    "fp16_ms": 12.0,
+    "fp32_boxes": 46.2,
+    "fp16_boxes": 46.4,
+    "same_count_frames": 13,
+    "total_frames": 20
+  },
+  "recheck_main_env": {
+    "torch": "2.14.1+cu130",
+    "tracking_cpu_fps": 3.76,
+    "tracking_gpu_fps": 8.96,
+    "tracking_speedup": 2.38,
+    "ball_cpu_fps": 3.58,
+    "ball_gpu_fps": 9.59,
+    "ball_speedup": 2.68
+  }
+}

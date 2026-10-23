@@ -93,7 +93,7 @@ class ReviewApp:
         values.update(video=str(source), output_root=str(self.output_root), clip_id=source.stem, match_id=f"local_{source.stem}")
         preset = pitch_spec(payload.get("pitch_model", "eleven"))
         values.update(pitch_model=preset["model"], pitch_length_m=preset["length_m"], pitch_width_m=preset["width_m"], calibration_method="manual" if preset["model"] == "eight" else "white_lines")
-        for key in ["pitch_length_m", "pitch_width_m", "start_frame", "end_frame", "imgsz", "calibration_method"]:
+        for key in ["pitch_length_m", "pitch_width_m", "start_frame", "end_frame", "imgsz", "calibration_method", "device"]:
             if key in payload:
                 values[key] = payload[key]
         config = config_from_dict(values)
@@ -155,7 +155,7 @@ class ReviewApp:
         def worker():
             """完成后发布足球版本，失败保留上一份完成结果。"""
             try:
-                result = track_ball_run(run_dir, model_id, progress)
+                result = track_ball_run(run_dir, model_id, progress, device=manifest["config"].get("device", "cpu"))
                 with self.lock:
                     job.update(status="complete", stage="complete", result_id=result["result_id"])
             except Exception as error:
@@ -175,11 +175,11 @@ class ReviewApp:
         return candidate
 
     def runs(self):
-        """按运行名称倒序返回片段标识、运行状态与处理帧数列表。"""
+        """按运行名称倒序返回片段标识、运行状态、处理帧数与推理设备列表。"""
         entries = []
         for path in sorted(self.output_root.glob("run_*/manifest.json"), reverse=True):
             manifest = read_json(path)
-            entries.append({"run_id": manifest["run_id"], "status": manifest["status"], "clip_id": manifest["config"]["clip_id"], "processed_frames": manifest.get("processed_frames", 0)})
+            entries.append({"run_id": manifest["run_id"], "status": manifest["status"], "clip_id": manifest["config"]["clip_id"], "processed_frames": manifest.get("processed_frames", 0), "device": manifest["config"].get("device", "cpu")})
         return entries
 
     def data(self, run_id):

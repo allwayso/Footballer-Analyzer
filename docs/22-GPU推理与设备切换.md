@@ -1,0 +1,182 @@
+# 22 · GPU 推理与设备切换
+
+> 日期：2026-10-22。本篇记录把人物检测与足球检测从 CPU 迁到 GPU 的过程、实测数据和两个方案的取舍。
+
+## 1. 结论先看
+
+检测设备现在由 `device` 配置项控制（`cpu` / `gpu`），前端可显式切换，运行清单记录**实际生效的后端**。默认仍是 CPU，行为与升级前完全一致。
+
+本机实测（RTX 4060 Laptop，sm_89）：
+
+| 环节 | CPU | GPU | 倍数 |
+|---|---:|---:|---:|
+| 单帧人物检测（imgsz=1920，含前后处理） | 160.2 ms | **14.1 ms** | **11.4×** |
+| 人物追踪阶段（125 帧端到端） | 3.76 FPS | **8.96 FPS** | 2.38× |
+| 足球追踪阶段（125 帧端到端） | 3.58 FPS | **9.59 FPS** | 2.68× |
+
+端到端数字为主环境（torch 2.14.1+cu130）同协议实测；单帧数字采集于隔离环境（torch 2.11.0+cu128），两者一致。
+
+**端到端倍数远低于单帧倍数**，因为推理加速后瓶颈转移到了 CPU 侧的其他环节（见 §5）。
+
+完整的对比数据、图表与生成脚本见 [CPU 与 GPU 实测对比](bench/device_compare.md)，
+原始数据 `docs/bench/device_compare.json`，图表 `docs/bench/device_compare_*.png`。
+
+## 2. 硬件前提已变更
+
+早期文档（[00 总报告](00-总报告-调研结论.md)、[02 本机实测数据](02-本机实测数据.md)）写的是"无 NVIDIA 独显、无 CUDA"。**2026-10-22 实测本机另有一块 NVIDIA GeForce RTX 4060 Laptop GPU（8 GB，sm_89），驱动 616.64 / CUDA UMD 13.4**，`nvidia-smi` 正常。
+
+这改变了方案取舍：早期把核显（DirectML / ROCm）作为唯一 GPU 路径，是因为当时只看到 Radeon 780M 核显。
+
+## 3. 三个方案的实测与取舍
+
+### 3.1 ONNX + DirectML（核显，未采用）
+
+| 项 | 结果 |
+|---|---|
+| 安装 | `onnxruntime-directml 1.24.4` 可装，DML provider 出现在列表 |
+| **阻塞 1** | Ultralytics 的 `check_requirements` 会把 CPU 版 `onnxruntime` 装回来**覆盖** DirectML（两者是同一 Python 模块名 `onnxruntime`） |
+| **阻塞 2** | ORT 1.24.4 的 Python 封装在 `run()` 中调用 `is_webgpu_graph_capture_enabled()`，而 DirectML 原生库没有该 API → **DML session 一跑就崩** |
+| 纯推理速度 | 干净环境下 640 档 4.3 ms、1920 档 27.9 ms（vs ORT-CPU 24.1 / 331.3 ms） |
+| 端到端 | **640 档反而更慢**（DML 35.2 ms vs ORT-CPU 28.6 ms）——小模型时 letterbox + NMS 的 CPU 开销占主导 |
+| 部署成本 | 最低，**不需要任何额外驱动**（DirectML 跑在 Windows 自带 D3D12 上，用现有显卡驱动即可） |
+
+### 3.2 ROCm 原生 PyTorch（核显，未采用）
+
+| 项 | 结果 |
+|---|---|
+| 安装 | `torch==2.14.0+rocm10.1.0` + `torchvision==0.29.0a0+rocm10.1.0`，**有 cp313 Windows wheel**，与项目 Python 3.13 匹配 |
+| 识别 | `torch.cuda.is_available() = True`，GPU 名称正确，`gfx1103` 在 arch list 内 |
+| **阻塞** | 任何 kernel 都失败，连 8×8 矩阵乘法都报 `hipErrorInvalidKernelFile`。本机装的是**普通 Adrenalin 驱动**，不是 ROCm 专用驱动 |
+| 修复要求 | AMD 官方要求 Adrenalin 26.10.41.05 + **Windows CDE CPR 驱动 26.10.48** + Windows 11 25H2，均为系统级安装，需管理员权限，通常要重启 |
+| 部署成本 | **最高**——ROCm 的内核态驱动不包含在 pip wheel 里，每台部署机器都要单独安装 |
+
+### 3.3 CUDA 原生 PyTorch（**采用**）
+
+| 项 | 结果 |
+|---|---|
+| 安装 | `pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130`，装到 torch 2.14.1+cu130（与 CPU 版版本号一致，仅构建变体不同） |
+| 驱动 | **无需额外安装**。PyTorch 的 pip wheel 自带 CUDA 运行时，用户只需 NVIDIA 驱动（本机已有） |
+| 代码改动 | `device=0` 一行，Ultralytics 原生支持 |
+| 模型 | `.pt` 原样使用，CPU 快速路径零损失 |
+| 限制 | 需要 NVIDIA 显卡 |
+
+## 4. 代码改动
+
+| 文件 | 改动 |
+|---|---|
+| `detection.py` | 新增 `resolve_device()` 与 `gpu_name()`；`YoloDetector` 接受 `device` 参数，`device="cpu"` 硬编码改为 `self.device` |
+| `ball_detection.py` | `detect()` 增加 `device` 参数并透传 |
+| `config.py` | `Config` 新增 `device: str = "cpu"`，校验白名单 `{cpu, gpu}` |
+| `pipeline.py` | 传 device 给 `YoloDetector`；manifest 新增 `inference` 字段 |
+| `ball_pipeline.py` | 接受并透传 device；结果 manifest 同样记录 `inference` |
+| `cli.py` | `track` / `benchmark` 新增 `--device {cpu,gpu}` |
+| `benchmark.py` | protocol 记录 `device`；environment 记录 torch 版本、GPU 可用性与名称 |
+| `server.py` | 接受前端传入的 device；足球任务沿用人物运行的设备 |
+| `web/index.html` | 新增「推理设备」下拉 |
+| `web/app.js` | payload 带 device；job 恢复同步；进度文案按实际设备显示 |
+
+**关键设计：GPU 不可用时明确报错，绝不静默退回 CPU。** `resolve_device()` 在 `torch.cuda.is_available()` 为假时抛出可执行提示，避免用户以为在跑 GPU、实际跑的是 CPU 而得出错误结论。
+
+运行清单记录实际后端：
+
+```json
+"inference": {
+  "device_requested": "gpu",
+  "backend": "ultralytics-torch",
+  "gpu_name": "NVIDIA GeForce RTX 4060 Laptop GPU"
+}
+```
+
+## 5. 端到端瓶颈已转移
+
+GPU 把单帧推理从 160 ms 压到 14 ms 后，端到端只快了约 2.4×。剩余时间分布（GPU 环境实测，1920 档）：
+
+| 环节 | 耗时 |
+|---|---:|
+| YOLO 推理（含 letterbox + NMS） | 15.4 ms |
+| `teams.predict`（每框一次 `cv2.cvtColor` + KMeans.predict，50 框） | **11.8 ms** |
+| letterbox 单独 | 3.0 ms |
+| 整帧拷贝 | 1.3 ms |
+
+**`teams.py` 的球衣特征提取是当前最大的 CPU 热点**：同一帧的上衣区域被 `cvtColor` 反复处理 2–3 次（`teams.predict`、`shirt_histogram`、关联证据各一次）。这属于 CPU 侧优化，不在本次 GPU 升级范围内，但它是下一步最值得动的地方。
+
+这一点在多素材对比中可直接量化（每段 300 帧，imgsz 1920）：
+
+| 素材 | 每帧检测框 | CPU (FPS) | GPU (FPS) | 端到端加速 | 纯推理加速 | 球衣特征 (ms/帧) |
+|---|---:|---:|---:|---:|---:|---:|
+| barca_girona_05m00s | 80 | 3.65 | 6.27 | 1.72× | 10.56× | 18.4 |
+| barca_girona_85m00s | 43 | 4.26 | 8.59 | 2.02× | 10.74× | 8.8 |
+| clip_105m00s | 46 | 4.34 | 8.93 | 2.05× | 9.42× | 10.8 |
+
+**纯推理加速稳定在 9–11×，端到端加速却随检测框数量下降**——框越多，`teams.predict` 的重复 `cvtColor` 越贵，GPU 加速被稀释。
+
+输入尺寸的影响（素材 barca_girona_85m00s，单帧 detect）：
+
+| imgsz | CPU (ms) | CPU (FPS) | GPU (ms) | GPU (FPS) | 加速 |
+|---:|---:|---:|---:|---:|---:|
+| 640 | 23.8 | 42.0 | 10.2 | 97.7 | **2.33×** |
+| 1280 | 65.4 | 15.3 | 12.8 | 78.3 | **5.11×** |
+| 1920 | 139.3 | 7.2 | 13.6 | 73.4 | **10.24×** |
+
+**GPU 耗时几乎不随输入尺寸变化（10.2→13.6 毫秒），CPU 则近似线性增长**，因此分辨率越高 GPU 优势越大。这对精度优先的 1920 档尤其有利。
+
+另外，**逐帧白线标定阶段不含任何神经网络**（纯 OpenCV + scipy），GPU 对它零帮助——实测 8.13 → 8.08 FPS（0.99×，属测量波动）。
+
+## 6. 精度对比
+
+同一素材 12 帧，CPU 与 GPU 各跑一遍 imgsz=1920：
+
+| 指标 | 结果 |
+|---|---|
+| 每帧检出框数量 | 20/20 帧完全一致 |
+| 按 IoU ≥ 0.9 一一匹配 | **98.9%** 的框匹配成功（12 帧共 6 个未匹配） |
+| 置信度最大差异 | 0.0020 |
+| 框坐标 | 直接逐行比较会看到上千像素差异，**这是 NMS 输出顺序不同所致，不是位置偏差**；按 IoU 匹配后差异很小 |
+
+GPU 与 CPU 使用不同的浮点累加顺序，末位精度不同属正常。**结论是"统计口径一致"，不是"逐位相同"**。
+
+## 7. 使用方式
+
+```powershell
+# 配置文件里指定
+# device: gpu
+
+# 或命令行覆盖
+& .\.venv\Scripts\python.exe -m footballer_analyzer track --config configs/tracking_quality.yaml --device gpu
+
+# 速度对比（同一协议，可加 --baseline 对比历史结果）
+& .\.venv\Scripts\python.exe -m footballer_analyzer benchmark `
+  --config configs/performance_benchmark.yaml --stages tracking ball --device gpu
+```
+
+**跨设备比较**：`benchmark` 的 `--baseline` 允许与另一台设备的结果对比——除 `device` 外的协议（素材、区间、配置、模型、预热次数、轮数）必须完全一致，否则拒绝比较。实测输出：
+
+```text
+人物追踪   8.94 FPS   相对基线速度：2.381 倍
+足球追踪   9.59 FPS   相对基线速度：2.677 倍
+```
+
+前端在「人物检测精度」旁新增「推理设备」下拉，切换后重跑即可对比。
+
+## 8. 环境说明
+
+GPU 推理需要**CUDA 或 ROCm 版 PyTorch**，默认的 CPU 版 `torch` 装不上 GPU：
+
+```powershell
+# CUDA（NVIDIA 显卡）
+& .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+
+# ROCm（AMD 显卡，需匹配 gfx 架构，且另装 ROCm 驱动）
+& .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://stable.repo.amd.com/rocm/whl-next/
+```
+
+PyTorch 的 pip wheel 自带 CUDA 运行时，**用户只需 NVIDIA 驱动，不需要装 CUDA Toolkit**。ROCm 则不同：内核态驱动不包含在 wheel 内，每台机器需单独安装 ROCm 专用驱动。
+
+## 9. 已知限制（如实声明）
+
+- **CPU 与 GPU 的历史运行不可直接互比**。浮点末位精度不同，轨迹 ID 可能有个别差异。请用 `benchmark` 在同一协议下对照，不要跨设备比较 `manifest.elapsed_s`。
+- **CPU 与 GPU 结果的差异来自浮点累加顺序**（GPU 用 CUDA 内核，CPU 用 CPU 内核），不是来自两套环境。同一环境内切换 `device` 即可比较，torch 版本一致（2.14.1，CPU/CUDA 构建变体不同）。
+- **端到端收益有限**（约 2.4–2.7×）。逐帧白线标定不受 GPU 加速，见 §5。
+- **只覆盖人物与足球检测**。逐帧白线标定和手动标定不含神经网络，不在本次范围内。
+- 尚未实现 **FP16 推理**（`half=True`）。已实测：FP32 14.0 毫秒、FP16 12.0 毫秒，仅快 1.17×，但 20 帧中只有 13 帧的检出框数量与 FP32 一致。**17% 的收益不抵精度风险，本轮不启用。**
+- **加速倍数高度依赖显卡型号**。本机数据来自 RTX 4060 独显；AMD 780M 核显走 ROCm 的实际收益未在本机验证（缺驱动），DirectML 路径也未跑通完整 predict 流程。核显用户不能套用本文的倍数。

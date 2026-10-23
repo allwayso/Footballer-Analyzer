@@ -68,7 +68,7 @@ Detection and reporting are separate stages: correcting identities or calibratio
 
 ## Quick Start
 
-The commands below use Windows / PowerShell. Requires **Python 3.11+; 3.12 recommended**. Detection currently runs on the CPU.
+The commands below use Windows / PowerShell. Requires **Python 3.11+; 3.12 recommended**. Detection runs on the CPU by default and can optionally use a GPU — see [GPU inference](docs/22-GPU推理与设备切换.md).
 
 ### 1. Install
 
@@ -80,6 +80,14 @@ python -m venv .venv
 & .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 & .\.venv\Scripts\python.exe -m pip install -e . -c configs/constraints-tested.txt
 ```
+
+To run detection on an NVIDIA GPU instead, install the CUDA build of PyTorch in place of the CPU one (the NVIDIA driver is all you need — the wheel carries its own CUDA runtime):
+
+```powershell
+& .\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu130
+```
+
+Then select it with `device: gpu` in the config, `--device gpu` on the command line, or the device dropdown in the web UI.
 
 ### 2. Prepare a Video and Model
 

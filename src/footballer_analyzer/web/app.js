@@ -2,7 +2,7 @@ const element = (id) => document.getElementById(id);
 const state = { runId: null, data: null, frame: 0, selected: null, image: null, whiteImage: null, playing: false, pointMode: false, roiMode: false, roi: [], points: [], requestId: 0, runRequestId: 0, frameRows: new Map(), detectionRows: new Map(), motionRows: new Map(), draftDirty: false, calibrationTimer: null };
 const colors = { home: "#28cfac", away: "#f9b26a", cluster_0: "#28cfac", cluster_1: "#f9b26a", unknown: "#a6b3b2" };
 const reasons = { unbound: "身份尚未确认", excluded: "人工排除", outside_roi: "超出可靠统计区域", outside_pitch: "投影超出球场", clipped_feet: "脚点被画面裁切", uncalibrated: "尚未标定", calibration_unreliable: "本帧白线几何不足，暂停场地投影", outside_calibration_window: "超出标定有效区间", invalid_projection: "投影无效", speed_jump: "异常速度跳变，已切段" };
-const analysis = { clips: [], timer: null, running: false, activeClip: null, handledId: null, runId: null };
+const analysis = { clips: [], timer: null, running: false, activeClip: null, handledId: null, runId: null, jobConfig: null };
 const analysisStages = { queued: "准备分析", inspecting: "核实视频可解码区间", sampling: "采样球衣颜色", tracking: "人物检测与持续追踪", awaiting_calibration: "人物追踪完成，待场地标定", complete: "分析完成" };
 const ball = { models: [], result: null, rows: new Map(), timer: null, requestId: 0, running: false, handledId: null };
 Object.assign(state, { draftPitch: null, preview: null, selectedLandmark: null, draftVersion: 0, geometryRequest: 0, pendingCalibrations: new Set() });
@@ -673,6 +673,12 @@ async function initialize(preferredId = null) {
   analysis.clips = clips;
   renderClips();
   const completed = runs.filter((run) => run.status === "complete");
+  // 页面首次加载时用最近一次运行的实际设备作为默认，避免与服务端状态脱节。
+  if (!analysis.jobConfig && completed.length) {
+    analysis.jobConfig = { device: completed[0].device };
+    element("analysis-device").value = completed[0].device;
+    updateDeviceTag();
+  }
   element("run-select").replaceChildren(...completed.map((run) => option(run.run_id, `${run.clip_id} · ${run.run_id.slice(-8)}`)));
   element("run-select").disabled = !completed.length;
   if (!completed.length) {
@@ -693,25 +699,31 @@ async function watchAnalysis() {
     const job = await request("/api/analysis-job");
     analysis.running = job.status === "running";
     analysis.runId = job.run_id;
+    analysis.jobConfig = job.config ?? null;
     analysis.activeClip = analysis.running ? job.clip_id : null;
     if (analysis.running) {
       if (!Array.from(element("clip-select").options).some((entry) => entry.value === job.clip_id)) renderClips();
       element("clip-select").value = job.clip_id;
       if (element("clip-preview").getAttribute("src") !== `/api/clips/${encodeURIComponent(job.clip_id)}/preview`) showClip();
-      for (const [id, key] of [["analysis-model", "pitch_model"], ["analysis-method", "calibration_method"], ["analysis-length", "pitch_length_m"], ["analysis-width", "pitch_width_m"], ["analysis-imgsz", "imgsz"], ["analysis-start", "start_frame"], ["analysis-end", "end_frame"]]) element(id).value = job.config[key] ?? "";
+    }
+    // 回显最近一次任务的配置，刷新页面后仍能看到当时实际使用的设备与参数。
+    if (job.config) {
+      for (const [id, key] of [["analysis-model", "pitch_model"], ["analysis-method", "calibration_method"], ["analysis-length", "pitch_length_m"], ["analysis-width", "pitch_width_m"], ["analysis-imgsz", "imgsz"], ["analysis-device", "device"], ["analysis-start", "start_frame"], ["analysis-end", "end_frame"]]) element(id).value = job.config[key] ?? "";
     }
     element("start-analysis").disabled = analysis.running || !element("clip-select").value;
     element("start-analysis").textContent = analysis.running ? "正在追踪人物…" : "开始人物追踪";
-    for (const id of ["clip-select", "unprocessed-only", "analysis-model", "analysis-method", "analysis-length", "analysis-width", "analysis-imgsz", "analysis-start", "analysis-end"]) element(id).disabled = analysis.running;
+    for (const id of ["clip-select", "unprocessed-only", "analysis-model", "analysis-method", "analysis-length", "analysis-width", "analysis-imgsz", "analysis-device", "analysis-start", "analysis-end"]) element(id).disabled = analysis.running;
     element("analysis-method").querySelector('[value="white_lines"]').disabled = element("analysis-model").value === "eight";
     element("open-analysis").hidden = !job.run_id || analysis.running;
     element("analysis-progress").hidden = !analysis.running;
     element("analysis-progress").max = Math.max(1, job.total_frames || 0);
     element("analysis-progress").value = job.processed_frames || 0;
+    updateDeviceTag();
     const label = element("analysis-status");
     label.classList.toggle("error", job.status === "failed");
     if (analysis.running) {
-      label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage} · ${job.processed_frames} / ${job.total_frames || "待确定"} 帧。CPU 分析需要一些时间，可继续查看已有运行；刷新页面后会恢复进度。`;
+      const deviceName = job.config?.device === "gpu" ? "GPU" : "CPU";
+      label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage} · ${job.processed_frames} / ${job.total_frames || "待确定"} 帧。正在用${deviceName}分析，可继续查看已有运行；刷新页面后会恢复进度。`;
       analysis.timer = setTimeout(watchAnalysis, 1000);
     } else if (job.status === "failed") {
       label.textContent = `${job.clip_id} · ${analysisStages[job.stage] || job.stage}失败：${job.error}${job.run_id ? "。人物缓存已保留，可打开结果并重新运行场地标定。" : "。可调整参数后重新开始。"}`;
@@ -749,6 +761,13 @@ element("refresh-clips").addEventListener("click", () => refreshClips().catch((e
 element("clip-preview").addEventListener("load", () => { element("clip-preview").hidden = false; element("clip-preview-status").hidden = true; });
 element("clip-preview").addEventListener("error", () => { element("clip-preview").hidden = true; element("clip-preview-status").hidden = false; element("clip-preview-status").textContent = "首帧预览不可用，请检查视频是否可解码。"; });
 element("open-analysis").addEventListener("click", () => initialize(analysis.runId).catch((error) => notify(error.message, true)));
+function updateDeviceTag() {
+  const tag = element("inference-device-tag");
+  if (!tag) return;
+  // 徽标反映最近一次实际使用的设备；无任务记录时才回退到下拉框的待选值。
+  const device = analysis.jobConfig?.device ?? element("analysis-device").value;
+  tag.textContent = device === "gpu" ? "GPU · 离线" : "CPU · 离线";
+}
 function updateAnalysisOptions(reset = false) {
   if (reset) {
     const preset = pitchModels.find((definition) => definition.spec.model === element("analysis-model").value);
@@ -763,9 +782,10 @@ function updateAnalysisOptions(reset = false) {
 }
 element("analysis-model").addEventListener("change", () => updateAnalysisOptions(true));
 element("analysis-method").addEventListener("change", () => updateAnalysisOptions());
+element("analysis-device").addEventListener("change", () => updateDeviceTag());
 element("start-analysis").addEventListener("click", async () => {
   const endText = element("analysis-end").value;
-  const payload = { clip_id: element("clip-select").value, pitch_model: element("analysis-model").value, calibration_method: element("analysis-method").value, pitch_length_m: Number(element("analysis-length").value), pitch_width_m: Number(element("analysis-width").value), imgsz: Number(element("analysis-imgsz").value), start_frame: Number(element("analysis-start").value), end_frame: endText === "" ? null : Number(endText) };
+  const payload = { clip_id: element("clip-select").value, pitch_model: element("analysis-model").value, calibration_method: element("analysis-method").value, pitch_length_m: Number(element("analysis-length").value), pitch_width_m: Number(element("analysis-width").value), imgsz: Number(element("analysis-imgsz").value), device: element("analysis-device").value, start_frame: Number(element("analysis-start").value), end_frame: endText === "" ? null : Number(endText) };
   if (!payload.clip_id) return;
   element("start-analysis").disabled = true;
   try {

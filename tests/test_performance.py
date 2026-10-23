@@ -67,6 +67,22 @@ class PerformanceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             compare_results({**current, "protocol": {**protocol, "video_sha256": "other"}}, baseline)
 
+    def test_compare_allows_different_device_but_rejects_other_protocol_changes(self):
+        """CPU 与 GPU 属同一测试协议，设备不同应允许比较并标注设备来源。"""
+        protocol = {"stages": ["tracking"], "video_sha256": "same", "device": "cpu",
+                    "config": {"video": "a.mp4", "imgsz": 1920, "device": "cpu"}}
+        baseline = {"status": "complete", "protocol": protocol, "summary": {"tracking": {"fps": 4}}}
+        current = {"protocol": {**protocol, "device": "gpu", "config": {**protocol["config"], "device": "gpu"}},
+                   "summary": {"tracking": {"fps": 10}}}
+        comparison = compare_results(current, baseline)["tracking"]
+        self.assertEqual(comparison["speedup"], 2.5)
+        self.assertEqual(comparison["baseline_device"], "cpu")
+        self.assertEqual(comparison["current_device"], "gpu")
+        with self.assertRaises(ValueError):
+            compare_results({**current, "protocol": {**protocol, "device": "gpu", "warmup": 9}}, baseline)
+        with self.assertRaises(ValueError):
+            compare_results({**current, "protocol": {**current["protocol"], "config": {**protocol["config"], "device": "gpu", "imgsz": 640}}}, baseline)
+
     def test_warmup_is_excluded_and_each_repeat_reruns(self):
         """预热和正式轮均执行新流水线，统计排除预热且不读历史耗时。"""
         with tempfile.TemporaryDirectory() as temporary:
